@@ -1,0 +1,7 @@
+.DS_Store
+.build/
+.swiftpm/
+dist/
+
+artifacts/*
+!artifacts/usage-hud-no-shadow-preview.png
