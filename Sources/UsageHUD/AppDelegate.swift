@@ -110,7 +110,14 @@ enum WindowSizing {
 }
 
 enum FullScreenSpaceDetection {
-    // A layer-0 window exactly the size of a screen is a full screen app (or a
+    // Fullscreen windows on notched MacBooks stop short of the notch strip,
+    // so allow the window to be up to this much shorter than the screen. A
+    // maximized-but-not-fullscreen window can land in the same range; hiding
+    // the HUD behind a window that covers the whole screen anyway is
+    // visually indistinguishable from sinking it.
+    static let heightTolerance: CGFloat = 80
+
+    // A layer-0 window covering a screen is a full screen app (or a
     // borderless window covering the whole screen, which the HUD should defer
     // to just the same). The HUD's own windows are excluded by owner PID.
     static func fullScreenWindowPresent(
@@ -126,22 +133,39 @@ enum FullScreenSpaceDetection {
                 let bounds = CGRect(dictionaryRepresentation: boundsValue)
             else { return false }
             return screenSizes.contains { size in
-                abs(size.width - bounds.width) < 1 && abs(size.height - bounds.height) < 1
+                abs(size.width - bounds.width) < 1
+                    && bounds.height >= size.height - heightTolerance
+                    && bounds.height <= size.height + 1
             }
         }
     }
 
+    // Compact "L<layer>:<width>x<height>" listing of the frontmost windows so
+    // the log shows exactly what the detection saw.
+    static func windowSummary(entries: [[String: Any]], limit: Int = 8) -> String {
+        let described: [String] = entries.prefix(limit).compactMap { entry in
+            guard
+                let layer = entry[kCGWindowLayer as String] as? Int,
+                let boundsValue = entry[kCGWindowBounds as String] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsValue)
+            else { return nil }
+            return "L\(layer):\(Int(bounds.width))x\(Int(bounds.height))"
+        }
+        return described.isEmpty ? "<none>" : described.joined(separator: " ")
+    }
+
     @MainActor
-    static func activeSpaceHasFullScreenWindow() -> Bool {
+    static func evaluateActiveSpace() -> (fullScreen: Bool, summary: String) {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let entries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return false
+            return (false, "<window list unavailable>")
         }
-        return fullScreenWindowPresent(
+        let fullScreen = fullScreenWindowPresent(
             entries: entries,
             screenSizes: NSScreen.screens.map { $0.frame.size },
             excludingPID: Int(ProcessInfo.processInfo.processIdentifier)
         )
+        return (fullScreen, windowSummary(entries: entries))
     }
 }
 
@@ -182,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelOrderingRaised = false
     private var panelHiddenForFullScreen = false
     private var panelUserHidden = false
+    private var orderingRecheckTask: Task<Void, Never>?
     private var mouseMonitors: [Any] = []
     private let notificationService = UsageNotificationService()
     private let updaterController = SPUStandardUpdaterController(
@@ -528,11 +553,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func workspaceOrderingChanged(_ notification: Notification) {
         updatePanelOrdering(reason: "workspace-changed")
+        // The Space-switch notification can arrive while the transition
+        // animation is still running, before the fullscreen window shows up
+        // in the on-screen window list. Look again once the dust settles.
+        orderingRecheckTask?.cancel()
+        orderingRecheckTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            self?.updatePanelOrdering(reason: "workspace-recheck")
+        }
     }
 
     private func updatePanelOrdering(reason: String) {
         guard panel != nil, !settings.alwaysOnTop else { return }
-        if FullScreenSpaceDetection.activeSpaceHasFullScreenWindow() {
+        let check = FullScreenSpaceDetection.evaluateActiveSpace()
+        AppLog.info("window", "Fullscreen check reason=\(reason) result=\(check.fullScreen) windows=\(check.summary)")
+        if check.fullScreen {
             // Without Always on Top the HUD must never cover a full screen
             // app, and no ordering call can push a canJoinAllSpaces panel
             // behind a full screen window — the window server hosts such

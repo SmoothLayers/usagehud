@@ -331,6 +331,18 @@ final class UsageHUDTests: XCTestCase {
             screenSizes: [screen],
             excludingPID: 1
         ))
+        // Fullscreen windows on notched MacBooks stop short of the notch strip.
+        XCTAssertTrue(FullScreenSpaceDetection.fullScreenWindowPresent(
+            entries: [entry(layer: 0, pid: 999, width: 1_728, height: 1_079)],
+            screenSizes: [screen],
+            excludingPID: 1
+        ))
+        // A window much shorter than the screen is an ordinary window.
+        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
+            entries: [entry(layer: 0, pid: 999, width: 1_728, height: 1_000)],
+            screenSizes: [screen],
+            excludingPID: 1
+        ))
         // The HUD's own windows never count as a full screen app.
         XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
             entries: [entry(layer: 0, pid: 1, width: 1_728, height: 1_117)],
