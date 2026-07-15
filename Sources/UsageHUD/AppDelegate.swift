@@ -119,6 +119,12 @@ enum WindowInteraction {
     static func level(alwaysOnTop: Bool) -> NSWindow.Level {
         alwaysOnTop ? .statusBar : .normal
     }
+
+    static func collectionBehavior(alwaysOnTop: Bool) -> NSWindow.CollectionBehavior {
+        var behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary]
+        if alwaysOnTop { behavior.insert(.fullScreenAuxiliary) }
+        return behavior
+    }
 }
 
 @MainActor
@@ -136,7 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lockHUDItem: NSMenuItem!
     private var clickThroughItem: NSMenuItem!
     private var alwaysOnTopItem: NSMenuItem!
-    private var updateItem: NSMenuItem!
     private var isApplyingProgrammaticResize = false
     private let notificationService = UsageNotificationService()
     private let updaterController = SPUStandardUpdaterController(
@@ -202,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if UserDefaults.standard.bool(forKey: setupCompletedKey) {
             store.start()
-            panel.orderFrontRegardless()
+            showPanel()
         } else {
             showSetupAssistant(firstRun: true)
         }
@@ -224,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.alphaValue = settings.hudOpacity
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.collectionBehavior = WindowInteraction.collectionBehavior(alwaysOnTop: settings.alwaysOnTop)
         panel.animationBehavior = .utilityWindow
         configurePanelSizeLimits(compact: compact)
         panel.contentView = NSHostingView(
@@ -283,9 +288,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alwaysOnTopItem.state = settings.alwaysOnTop ? .on : .off
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
-        menu.addItem(withTitle: "Run Setup Assistant…", action: #selector(runSetupAssistant), keyEquivalent: "")
-        updateItem = menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-        menu.addItem(withTitle: "Open Logs…", action: #selector(openLogs), keyEquivalent: "l")
         menu.addItem(.separator())
         launchAtLoginItem = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -315,13 +317,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func applyInteractionSettings() {
         guard panel != nil else { return }
+        let wasAlwaysOnTop = panel.level != .normal
         panel.isMovableByWindowBackground = !settings.lockHUD
         panel.ignoresMouseEvents = settings.clickThrough
         panel.level = WindowInteraction.level(alwaysOnTop: settings.alwaysOnTop)
+        panel.collectionBehavior = WindowInteraction.collectionBehavior(alwaysOnTop: settings.alwaysOnTop)
         panel.styleMask = WindowInteraction.styleMask(locked: settings.lockHUD)
         lockHUDItem?.state = settings.lockHUD ? .on : .off
         clickThroughItem?.state = settings.clickThrough ? .on : .off
         alwaysOnTopItem?.state = settings.alwaysOnTop ? .on : .off
+        if settings.alwaysOnTop, panel.isVisible {
+            panel.orderFrontRegardless()
+        } else if wasAlwaysOnTop, panel.isVisible {
+            // Reset the ordering established by status-bar level. Merely changing
+            // the level can leave the panel ahead of the active app until macOS
+            // performs another window-ordering operation.
+            panel.orderBack(nil)
+        }
         AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough) alwaysOnTop=\(settings.alwaysOnTop)")
     }
 
@@ -422,26 +434,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showHUD() {
         repairPanelFrame()
-        panel.orderFrontRegardless()
+        showPanel()
         AppLog.info("window", "HUD shown from menu")
     }
 
     @objc private func refresh() {
         store.refresh()
         repairPanelFrame()
-        panel.orderFrontRegardless()
     }
 
     @objc private func toggleCompactMode() {
         store.toggleCompact()
-        panel.orderFrontRegardless()
     }
 
     @objc private func resetWindowSize() {
         let compact = store.isCompact
         WindowSizing.reset(compact: compact)
         resizePanel(compact: compact)
-        panel.orderFrontRegardless()
         AppLog.info("window", "Size reset to default compact=\(compact)")
     }
 
@@ -502,6 +511,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 },
                 checkForUpdates: { [weak self] in
                     self?.checkForUpdates()
+                },
+                runSetupAssistant: { [weak self] in
+                    self?.runSetupAssistant()
+                },
+                openLogs: { [weak self] in
+                    self?.openLogs()
                 },
                 resetWindowSize: { [weak self] in
                     self?.resetWindowSize()
@@ -571,7 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupWindow = nil
         if firstRun { store.start() }
         repairPanelFrame()
-        panel.orderFrontRegardless()
+        showPanel()
         AppLog.info("setup", "Setup assistant completed firstRun=\(firstRun)")
     }
 
@@ -593,6 +608,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isApplyingProgrammaticResize = true
         panel.setFrame(frame, display: true)
         isApplyingProgrammaticResize = false
+    }
+
+    private func showPanel() {
+        if settings.alwaysOnTop {
+            panel.orderFrontRegardless()
+        } else {
+            panel.orderFront(nil)
+        }
     }
 
     private func savePanelOrigin(_ origin: NSPoint) {

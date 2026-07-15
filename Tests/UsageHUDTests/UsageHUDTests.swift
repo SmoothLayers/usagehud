@@ -63,6 +63,8 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertFalse(WindowInteraction.styleMask(locked: true).contains(.resizable))
         XCTAssertEqual(WindowInteraction.level(alwaysOnTop: true), .statusBar)
         XCTAssertEqual(WindowInteraction.level(alwaysOnTop: false), .normal)
+        XCTAssertTrue(WindowInteraction.collectionBehavior(alwaysOnTop: true).contains(.fullScreenAuxiliary))
+        XCTAssertFalse(WindowInteraction.collectionBehavior(alwaysOnTop: false).contains(.fullScreenAuxiliary))
     }
 
     func testAppSettingsPersistAndRestoreSupportedValues() throws {

@@ -13,6 +13,8 @@ struct SettingsView: View {
     @ObservedObject var store: UsageStore
     let setUsageAlerts: (Bool) -> Void
     let checkForUpdates: () -> Void
+    let runSetupAssistant: () -> Void
+    let openLogs: () -> Void
     let resetWindowSize: () -> Void
 
     var body: some View {
@@ -25,6 +27,7 @@ struct SettingsView: View {
                     appearanceSection
                     alertSection
                     updateSection
+                    maintenanceSection
                 }
                 .padding(.trailing, 4)
             }
@@ -296,6 +299,29 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private var maintenanceSection: some View {
+        InstrumentSection(title: "MAINTENANCE", detail: "Setup and local diagnostics") {
+            HStack(spacing: 10) {
+                maintenanceButton("RUN SETUP", systemImage: "wand.and.stars", action: runSetupAssistant)
+                maintenanceButton("OPEN LOGS", systemImage: "doc.text.magnifyingglass", action: openLogs)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func maintenanceButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 8, weight: .black, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.white.opacity(0.72))
     }
 
     private func alertThresholdRow(provider: ProviderKind, slot: UsageAlertSlot, accent: Color) -> some View {
