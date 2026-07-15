@@ -6,3 +6,5 @@ dist/
 artifacts/*
 !artifacts/usage-hud-no-shadow-preview.png
 !artifacts/v030-expanded-custom.png
+!artifacts/compact-vertical.png
+!artifacts/compact-horizontal.png
