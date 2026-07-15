@@ -42,6 +42,7 @@ enum UsageError: LocalizedError {
     case commandFailed(String)
     case invalidResponse(String)
     case notLoggedIn(String)
+    case rateLimited(retryAfter: TimeInterval?)
     case requestFailed(String)
 
     var errorDescription: String? {
@@ -51,11 +52,24 @@ enum UsageError: LocalizedError {
         case let .commandFailed(message), let .invalidResponse(message),
              let .notLoggedIn(message), let .requestFailed(message):
             return message
+        case let .rateLimited(retryAfter):
+            if let retryAfter {
+                return "Claude rate limited; retrying in \(UsageFormatting.durationText(retryAfter))"
+            }
+            return "Claude rate limited; waiting before retry"
         }
     }
 }
 
 enum UsageFormatting {
+    static func durationText(_ interval: TimeInterval) -> String {
+        let minutes = max(1, Int(ceil(interval / 60)))
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        let leftoverMinutes = minutes % 60
+        return leftoverMinutes == 0 ? "\(hours)h" : "\(hours)h \(leftoverMinutes)m"
+    }
+
     static func resetText(for date: Date?, now: Date = .now) -> String {
         guard let date else { return "Reset time unavailable" }
         let remaining = date.timeIntervalSince(now)

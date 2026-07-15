@@ -24,8 +24,8 @@ cp "$ROOT/.build/release/UsageHUD" "$CONTENTS/MacOS/UsageHUD"
   -c "Add :CFBundleIdentifier string 'com.smoothlayers.usagehud'" \
   -c "Add :CFBundleExecutable string 'UsageHUD'" \
   -c "Add :CFBundlePackageType string 'APPL'" \
-  -c "Add :CFBundleShortVersionString string '0.1.4'" \
-  -c "Add :CFBundleVersion string '5'" \
+  -c "Add :CFBundleShortVersionString string '0.1.13'" \
+  -c "Add :CFBundleVersion string '14'" \
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \

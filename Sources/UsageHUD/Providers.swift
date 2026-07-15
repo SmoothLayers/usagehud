@@ -44,8 +44,11 @@ enum ExecutableLocator {
 struct CodexUsageProvider: UsageProviding {
     func fetch() async throws -> ProviderUsage {
         guard let binary = ExecutableLocator.find("codex") else {
+            AppLog.error("codex", "Codex CLI not found")
             throw UsageError.executableMissing("Codex")
         }
+
+        AppLog.info("codex", "Usage request started")
 
         return try await Task.detached(priority: .utility) {
             let process = Process()
@@ -74,7 +77,7 @@ struct CodexUsageProvider: UsageProviding {
             try process.run()
 
             let messages = [
-                #"{"method":"initialize","id":0,"params":{"clientInfo":{"name":"usage_hud","title":"Usage HUD","version":"0.1.4"}}}"#,
+                #"{"method":"initialize","id":0,"params":{"clientInfo":{"name":"usage_hud","title":"Usage HUD","version":"\#(AppMetadata.version)"}}}"#,
                 #"{"method":"initialized","params":{}}"#,
                 #"{"method":"account/rateLimits/read","id":1,"params":null}"#,
             ].joined(separator: "\n") + "\n"
@@ -106,7 +109,9 @@ struct CodexUsageProvider: UsageProviding {
                         let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                         (object["id"] as? NSNumber)?.intValue == 1
                     else { continue }
-                    return try Self.parseResponseObject(object)
+                    let usage = try Self.parseResponseObject(object)
+                    AppLog.info("codex", "Usage request succeeded remaining=\(Int(usage.primary.remainingPercent.rounded()))% window=\(usage.primary.label)")
+                    return usage
                 }
             }
 
@@ -116,8 +121,10 @@ struct CodexUsageProvider: UsageProviding {
                 .last
                 .map(String.init) ?? "Codex did not return usage data"
             if cleanError.localizedCaseInsensitiveContains("login") {
+                AppLog.error("codex", "Usage request failed: login required")
                 throw UsageError.notLoggedIn("Sign in with `codex login`")
             }
+            AppLog.error("codex", "Usage request failed: \(cleanError)")
             throw UsageError.commandFailed(cleanError)
         }.value
     }
@@ -179,8 +186,10 @@ struct ClaudeUsageProvider: UsageProviding {
     private let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
     func fetch() async throws -> ProviderUsage {
+        AppLog.info("claude", "Usage request started")
         let credential = try await readCredential()
         guard let token = Self.findString(key: "accessToken", in: credential) else {
+            AppLog.error("claude", "Usage request failed: access token missing")
             throw UsageError.notLoggedIn("Sign in with `claude auth login`")
         }
 
@@ -189,14 +198,26 @@ struct ClaudeUsageProvider: UsageProviding {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("usage-hud/0.1.4", forHTTPHeaderField: "User-Agent")
+        request.setValue("usage-hud/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
+            AppLog.error("claude", "Usage request returned no HTTP response")
             throw UsageError.requestFailed("Claude usage request returned no response")
         }
+        AppLog.info("claude", "Usage response HTTP \(http.statusCode)")
         guard http.statusCode == 200 else {
-            if http.statusCode == 401 { throw UsageError.notLoggedIn("Claude login expired; run `claude auth login`") }
+            if http.statusCode == 401 {
+                AppLog.error("claude", "Usage request failed: login expired")
+                throw UsageError.notLoggedIn("Claude login expired; run `claude auth login`")
+            }
+            if http.statusCode == 429 {
+                let rawRetryAfter = http.value(forHTTPHeaderField: "Retry-After")
+                let parsedRetryAfter = Self.parseRetryAfter(rawRetryAfter)
+                AppLog.warning("claude", Self.retryAfterLogMessage(rawValue: rawRetryAfter, parsedSeconds: parsedRetryAfter))
+                throw UsageError.rateLimited(retryAfter: parsedRetryAfter)
+            }
+            AppLog.error("claude", "Usage request failed HTTP \(http.statusCode)")
             throw UsageError.requestFailed("Claude usage request failed (HTTP \(http.statusCode))")
         }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -209,13 +230,15 @@ struct ClaudeUsageProvider: UsageProviding {
         let weekly = Self.parseWindow(object["seven_day"], label: "7d window")
         let plan = Self.findString(key: "subscriptionType", in: credential)?.capitalized
 
-        return ProviderUsage(
+        let usage = ProviderUsage(
             kind: .claude,
             plan: plan,
             primary: primary,
             secondary: weekly,
             fetchedAt: .now
         )
+        AppLog.info("claude", "Usage request succeeded remaining=\(Int(usage.primary.remainingPercent.rounded()))% window=\(usage.primary.label)")
+        return usage
     }
 
     private func readCredential() async throws -> Any {
@@ -252,6 +275,31 @@ struct ClaudeUsageProvider: UsageProviding {
             reset = nil
         }
         return UsageWindow(label: label, usedPercent: utilization, resetsAt: reset)
+    }
+
+    static func parseRetryAfter(_ value: String?, now: Date = .now) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        // A zero-second value can produce a tight 429 loop when the service is
+        // still rate limited. Treat it as unusable so the scheduler applies its
+        // conservative fallback backoff instead.
+        if let seconds = TimeInterval(value), seconds > 0 { return seconds }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: value) else { return nil }
+        let interval = date.timeIntervalSince(now)
+        return interval > 0 ? interval : nil
+    }
+
+    static func retryAfterLogMessage(rawValue: String?, parsedSeconds: TimeInterval?) -> String {
+        let raw = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayedRaw = raw.flatMap { $0.isEmpty ? nil : $0 } ?? "<missing>"
+        let displayedSeconds = parsedSeconds.map { String(Int($0.rounded())) } ?? "<unparsed>"
+        return "Rate limited HTTP 429 Retry-After raw=\"\(displayedRaw)\" parsedSeconds=\(displayedSeconds)"
     }
 
     static func findString(key: String, in value: Any) -> String? {

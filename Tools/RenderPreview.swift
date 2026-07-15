@@ -22,6 +22,9 @@ struct RenderPreview {
             secondary: UsageWindow(label: "7d window", usedPercent: 35, resetsAt: now.addingTimeInterval(410_000)),
             fetchedAt: now
         ))
+        if CommandLine.arguments.contains("--stale") {
+            store.claudeNotice = "Rate limited · retry in 5m"
+        }
 
         let renderer = ImageRenderer(content: HUDView(store: store, hide: {}))
         renderer.scale = 2

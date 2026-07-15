@@ -13,15 +13,26 @@ struct HUDView: View {
     let hide: () -> Void
 
     var body: some View {
-        VStack(spacing: store.isCompact ? 10 : 14) {
-            header
-            HStack(spacing: 10) {
-                ProviderCard(kind: .codex, state: store.codex, compact: store.isCompact)
-                ProviderCard(kind: .claude, state: store.claude, compact: store.isCompact)
+        Group {
+            if store.isCompact {
+                compactHUD
+            } else {
+                expandedHUD
             }
         }
-        .padding(store.isCompact ? 10 : 14)
-        .frame(width: store.isCompact ? 300 : 390)
+        .preferredColorScheme(.dark)
+    }
+
+    private var expandedHUD: some View {
+        VStack(spacing: 14) {
+            header
+            HStack(spacing: 10) {
+                ProviderCard(kind: .codex, state: store.codex, compact: false, notice: nil)
+                ProviderCard(kind: .claude, state: store.claude, compact: false, notice: store.claudeNotice)
+            }
+        }
+        .padding(14)
+        .frame(width: 390)
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -33,7 +44,15 @@ struct HUDView: View {
             }
         )
         .padding(20)
-        .preferredColorScheme(.dark)
+    }
+
+    private var compactHUD: some View {
+        VStack(spacing: 8) {
+            CompactUsageStrip(kind: .codex, state: store.codex, notice: nil)
+            CompactUsageStrip(kind: .claude, state: store.claude, notice: store.claudeNotice)
+        }
+        .frame(width: 322)
+        .padding(14)
     }
 
     private var header: some View {
@@ -73,10 +92,141 @@ struct HUDView: View {
     }
 }
 
+private struct CompactUsageStrip: View {
+    let kind: ProviderKind
+    let state: ProviderState
+    let notice: String?
+
+    private var accent: Color { kind == .codex ? HUDPalette.codex : HUDPalette.claude }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch state {
+            case .loading:
+                loading
+            case let .failed(message):
+                failure(message)
+            case let .loaded(usage):
+                loaded(usage)
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(HUDPalette.panel.opacity(0.96))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(accent.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private func loaded(_ usage: ProviderUsage) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                providerLabel
+                if let notice {
+                    Text("STALE")
+                        .font(.system(size: 7, weight: .black, design: .monospaced))
+                        .tracking(0.7)
+                        .foregroundStyle(Color(red: 1, green: 0.76, blue: 0.32))
+                        .help(notice)
+                }
+                Spacer()
+                Text(usage.primary.remainingPercent, format: .number.precision(.fractionLength(0)))
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.white.opacity(0.95))
+                Text("%")
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundStyle(accent)
+                Text("LEFT")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundStyle(HUDPalette.muted)
+            }
+
+            UsageBar(remaining: usage.primary.remainingPercent, accent: accent)
+
+            HStack(spacing: 5) {
+                Text(usage.primary.label.uppercased())
+                Text("·")
+                Text(compactResetText(for: usage.primary.resetsAt))
+                Spacer(minLength: 8)
+                if let secondary = usage.secondary {
+                    Text("WEEK \(Int(secondary.remainingPercent.rounded()))%")
+                        .foregroundStyle(Color.white.opacity(0.72))
+                }
+            }
+            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+            .foregroundStyle(HUDPalette.muted)
+            .lineLimit(1)
+        }
+    }
+
+    private var loading: some View {
+        HStack(spacing: 8) {
+            providerLabel
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+                .tint(accent)
+            Text("CHECKING")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundStyle(HUDPalette.muted)
+        }
+    }
+
+    private func failure(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                providerLabel
+                Spacer()
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(accent)
+            }
+            Text(message)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.64))
+                .lineLimit(1)
+        }
+    }
+
+    private var providerLabel: some View {
+        Text(kind.displayName)
+            .font(.system(size: 10, weight: .black, design: .monospaced))
+            .tracking(1.2)
+            .foregroundStyle(accent)
+    }
+
+    private func compactResetText(for date: Date?, now: Date = .now) -> String {
+        guard let date else { return "RESET —" }
+        let remaining = date.timeIntervalSince(now)
+        if remaining <= 0 { return "RESETTING" }
+
+        let minutes = max(1, Int(remaining / 60))
+        if minutes < 60 { return "RESET \(minutes)M" }
+
+        let hours = minutes / 60
+        let leftoverMinutes = minutes % 60
+        if hours < 24 {
+            return leftoverMinutes == 0 ? "RESET \(hours)H" : "RESET \(hours)H \(leftoverMinutes)M"
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE h:mm a"
+        return "RESET \(formatter.string(from: date).uppercased())"
+    }
+}
+
 private struct ProviderCard: View {
     let kind: ProviderKind
     let state: ProviderState
     let compact: Bool
+    let notice: String?
 
     private var accent: Color { kind == .codex ? HUDPalette.codex : HUDPalette.claude }
 
@@ -88,7 +238,13 @@ private struct ProviderCard: View {
                     .tracking(1.3)
                     .foregroundStyle(accent)
                 Spacer()
-                if let plan = state.usage?.plan, !compact {
+                if let notice {
+                    Text("STALE")
+                        .font(.system(size: 8, weight: .black, design: .monospaced))
+                        .tracking(0.8)
+                        .foregroundStyle(Color(red: 1, green: 0.76, blue: 0.32))
+                        .help(notice)
+                } else if let plan = state.usage?.plan, !compact {
                     Text(plan.uppercased())
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundStyle(HUDPalette.muted)
