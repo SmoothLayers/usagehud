@@ -13,6 +13,7 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT/.build/module-cache"
 export XDG_CACHE_HOME="$ROOT/.build/cache"
 swift build -c release --disable-sandbox
 
+echo "Assembling app bundle"
 rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$ROOT/.build/release/UsageHUD" "$CONTENTS/MacOS/UsageHUD"
@@ -23,8 +24,10 @@ if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
   exit 1
 fi
 mkdir -p "$CONTENTS/Frameworks"
+echo "Embedding Sparkle.framework from $SPARKLE_FRAMEWORK"
 ditto "$SPARKLE_FRAMEWORK" "$CONTENTS/Frameworks/Sparkle.framework"
 
+echo "Writing Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string '$APP_NAME'" \
   -c "Add :CFBundleDisplayName string '$APP_NAME'" \
   -c "Add :CFBundleInfoDictionaryVersion string '6.0'" \
@@ -47,5 +50,6 @@ ditto "$SPARKLE_FRAMEWORK" "$CONTENTS/Frameworks/Sparkle.framework"
   -c "Add :SUVerifyUpdateBeforeExtraction bool true" \
   "$CONTENTS/Info.plist"
 
+echo "Signing app bundle"
 codesign --force --deep --sign - "$APP_DIR"
 echo "$APP_DIR"
