@@ -554,13 +554,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func workspaceOrderingChanged(_ notification: Notification) {
         updatePanelOrdering(reason: "workspace-changed")
         // The Space-switch notification can arrive while the transition
-        // animation is still running, before the fullscreen window shows up
-        // in the on-screen window list. Look again once the dust settles.
+        // animation is still running, before the on-screen window list
+        // reflects the destination Space. Look again once the dust settles.
+        scheduleOrderingRecheck()
+    }
+
+    private func scheduleOrderingRecheck() {
         orderingRecheckTask?.cancel()
         orderingRecheckTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
-            self?.updatePanelOrdering(reason: "workspace-recheck")
+            self?.updatePanelOrdering(reason: "recheck")
         }
     }
 
@@ -581,6 +585,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         if panelHiddenForFullScreen, !panelUserHidden {
+            // A transition frame can read false while actually landing in a
+            // fullscreen Space, and restoring there would leave the panel
+            // floating over the fullscreen app. Hide instantly, but restore
+            // only after the settled recheck confirms the Space is normal.
+            guard reason == "recheck" else {
+                scheduleOrderingRecheck()
+                return
+            }
             panelHiddenForFullScreen = false
             // orderBack re-inserts the panel at the back of the normal level,
             // so it returns already sunk.
