@@ -66,29 +66,58 @@ struct SettingsView: View {
     }
 
     private var refreshSection: some View {
-        InstrumentSection(title: "REFRESH CADENCE", detail: "Each visible provider uses its own timer · Claude polls at most every 5 min to avoid rate limits") {
-            HStack(spacing: 8) {
-                ForEach(AppSettings.pollingChoices, id: \.self) { interval in
-                    let selected = settings.pollingInterval == interval
-                    Button {
-                        settings.setPollingInterval(interval)
-                    } label: {
-                        Text("\(Int(interval / 60)) MIN")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(selected ? SettingsPalette.codex.opacity(0.18) : Color.white.opacity(0.045))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(selected ? SettingsPalette.codex.opacity(0.8) : Color.white.opacity(0.08))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(selected ? SettingsPalette.codex : Color.white.opacity(0.72))
+        InstrumentSection(title: "REFRESH CADENCE", detail: "Each provider has its own timer · Claude starts at 5 min to avoid rate limits") {
+            VStack(spacing: 10) {
+                cadenceRow(
+                    label: "CODEX",
+                    tint: SettingsPalette.codex,
+                    choices: AppSettings.codexPollingChoices,
+                    selected: settings.codexPollingInterval,
+                    select: { settings.setCodexPollingInterval($0) }
+                )
+                cadenceRow(
+                    label: "CLAUDE",
+                    tint: SettingsPalette.claude,
+                    choices: AppSettings.claudePollingChoices,
+                    selected: settings.claudePollingInterval,
+                    select: { settings.setClaudePollingInterval($0) }
+                )
+            }
+        }
+    }
+
+    private func cadenceRow(
+        label: String,
+        tint: Color,
+        choices: [TimeInterval],
+        selected: TimeInterval,
+        select: @escaping (TimeInterval) -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(SettingsPalette.muted)
+                .frame(width: 52, alignment: .leading)
+            ForEach(choices, id: \.self) { interval in
+                let isSelected = selected == interval
+                Button {
+                    select(interval)
+                } label: {
+                    Text("\(Int(interval / 60)) MIN")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(isSelected ? tint.opacity(0.18) : Color.white.opacity(0.045))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(isSelected ? tint.opacity(0.8) : Color.white.opacity(0.08))
+                        )
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(isSelected ? tint : Color.white.opacity(0.72))
             }
         }
     }

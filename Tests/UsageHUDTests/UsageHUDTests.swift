@@ -73,7 +73,8 @@ final class UsageHUDTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let settings = AppSettings(defaults: defaults)
-        XCTAssertEqual(settings.pollingInterval, 120)
+        XCTAssertEqual(settings.codexPollingInterval, 120)
+        XCTAssertEqual(settings.claudePollingInterval, 300)
         XCTAssertTrue(settings.showCodex)
         XCTAssertTrue(settings.showClaude)
         XCTAssertEqual(settings.hudOpacity, 1)
@@ -90,7 +91,8 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(settings.compactLayout, .vertical)
         XCTAssertEqual(settings.codexAccentHex, HUDAccentPalette.codexDefault)
 
-        settings.setPollingInterval(600)
+        settings.setCodexPollingInterval(600)
+        settings.setClaudePollingInterval(900)
         settings.setProvider(.claude, visible: false)
         settings.setHUDOpacity(0.72)
         settings.setShowMenuBarUsage(true)
@@ -109,7 +111,8 @@ final class UsageHUDTests: XCTestCase {
         settings.setAccent("63C5FF", provider: .codex)
 
         let restored = AppSettings(defaults: defaults)
-        XCTAssertEqual(restored.pollingInterval, 600)
+        XCTAssertEqual(restored.codexPollingInterval, 600)
+        XCTAssertEqual(restored.claudePollingInterval, 900)
         XCTAssertTrue(restored.showCodex)
         XCTAssertFalse(restored.showClaude)
         XCTAssertEqual(restored.hudOpacity, 0.72, accuracy: 0.001)
@@ -163,8 +166,10 @@ final class UsageHUDTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let settings = AppSettings(defaults: defaults)
 
-        settings.setPollingInterval(30)
-        XCTAssertEqual(settings.pollingInterval, 120)
+        settings.setCodexPollingInterval(30)
+        XCTAssertEqual(settings.codexPollingInterval, 120)
+        settings.setClaudePollingInterval(120)
+        XCTAssertEqual(settings.claudePollingInterval, 300)
         settings.setProvider(.codex, visible: false)
         XCTAssertFalse(settings.showCodex)
         settings.setProvider(.claude, visible: false)
@@ -311,9 +316,35 @@ final class UsageHUDTests: XCTestCase {
         )
     }
 
-    func testProvidersUseIndependentTwoMinuteIntervals() {
+    func testProvidersUseIndependentDefaultIntervals() {
         XCTAssertEqual(PollingSchedule.codexInterval, 120)
-        XCTAssertEqual(PollingSchedule.claudeInterval, 120)
+        XCTAssertEqual(PollingSchedule.claudeInterval, 300)
+    }
+
+    func testLegacySharedPollingIntervalMigratesToPerProviderSettings() throws {
+        let suiteName = "UsageHUDTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // A legacy choice valid for both providers carries over to both.
+        defaults.set(600.0, forKey: "pollingInterval")
+        let migrated = AppSettings(defaults: defaults)
+        XCTAssertEqual(migrated.codexPollingInterval, 600)
+        XCTAssertEqual(migrated.claudePollingInterval, 600)
+
+        // A legacy 2-minute choice is below Claude's floor and falls to its
+        // default while Codex keeps it.
+        defaults.set(120.0, forKey: "pollingInterval")
+        let floored = AppSettings(defaults: defaults)
+        XCTAssertEqual(floored.codexPollingInterval, 120)
+        XCTAssertEqual(floored.claudePollingInterval, 300)
+
+        // Explicit per-provider values win over the legacy key.
+        defaults.set(900.0, forKey: "codexPollingInterval")
+        defaults.set(900.0, forKey: "claudePollingInterval")
+        let explicit = AppSettings(defaults: defaults)
+        XCTAssertEqual(explicit.codexPollingInterval, 900)
+        XCTAssertEqual(explicit.claudePollingInterval, 900)
     }
 
     func testFullScreenSpaceDetectionMatchesScreenSizedNormalWindows() {

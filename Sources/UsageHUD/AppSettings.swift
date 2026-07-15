@@ -14,10 +14,13 @@ enum AppSettingsChange {
 }
 
 final class AppSettings: ObservableObject {
-    static let pollingChoices: [TimeInterval] = [2 * 60, 5 * 60, 10 * 60, 15 * 60]
-    static let defaultPollingInterval: TimeInterval = 2 * 60
+    static let codexPollingChoices: [TimeInterval] = [2 * 60, 5 * 60, 10 * 60, 15 * 60]
+    static let claudePollingChoices: [TimeInterval] = [5 * 60, 10 * 60, 15 * 60]
+    static let defaultCodexPollingInterval: TimeInterval = 2 * 60
+    static let defaultClaudePollingInterval: TimeInterval = 5 * 60
 
-    @Published private(set) var pollingInterval: TimeInterval
+    @Published private(set) var codexPollingInterval: TimeInterval
+    @Published private(set) var claudePollingInterval: TimeInterval
     @Published private(set) var showCodex: Bool
     @Published private(set) var showClaude: Bool
     @Published private(set) var hudOpacity: Double
@@ -40,7 +43,9 @@ final class AppSettings: ObservableObject {
 
     private let defaults: UserDefaults
     private enum Key {
-        static let pollingInterval = "pollingInterval"
+        static let legacyPollingInterval = "pollingInterval"
+        static let codexPollingInterval = "codexPollingInterval"
+        static let claudePollingInterval = "claudePollingInterval"
         static let showCodex = "showCodex"
         static let showClaude = "showClaude"
         static let hudOpacity = "hudOpacity"
@@ -61,10 +66,22 @@ final class AppSettings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        let savedInterval = defaults.double(forKey: Key.pollingInterval)
-        pollingInterval = Self.pollingChoices.contains(savedInterval)
-            ? savedInterval
-            : Self.defaultPollingInterval
+        // Until v0.6.5 both providers shared one cadence under the legacy
+        // key; carry a saved choice over so it survives the split. A legacy
+        // 2-minute choice is not valid for Claude and falls to its default.
+        let legacyInterval = defaults.double(forKey: Key.legacyPollingInterval)
+        codexPollingInterval = Self.migratedInterval(
+            saved: defaults.double(forKey: Key.codexPollingInterval),
+            legacy: legacyInterval,
+            choices: Self.codexPollingChoices,
+            fallback: Self.defaultCodexPollingInterval
+        )
+        claudePollingInterval = Self.migratedInterval(
+            saved: defaults.double(forKey: Key.claudePollingInterval),
+            legacy: legacyInterval,
+            choices: Self.claudePollingChoices,
+            fallback: Self.defaultClaudePollingInterval
+        )
         let savedShowCodex = defaults.object(forKey: Key.showCodex) == nil
             ? true
             : defaults.bool(forKey: Key.showCodex)
@@ -115,11 +132,29 @@ final class AppSettings: ObservableObject {
         (showCodex ? 1 : 0) + (showClaude ? 1 : 0)
     }
 
-    func setPollingInterval(_ interval: TimeInterval) {
-        guard Self.pollingChoices.contains(interval), pollingInterval != interval else { return }
-        pollingInterval = interval
-        defaults.set(interval, forKey: Key.pollingInterval)
+    func setCodexPollingInterval(_ interval: TimeInterval) {
+        guard Self.codexPollingChoices.contains(interval), codexPollingInterval != interval else { return }
+        codexPollingInterval = interval
+        defaults.set(interval, forKey: Key.codexPollingInterval)
         changed?(.polling)
+    }
+
+    func setClaudePollingInterval(_ interval: TimeInterval) {
+        guard Self.claudePollingChoices.contains(interval), claudePollingInterval != interval else { return }
+        claudePollingInterval = interval
+        defaults.set(interval, forKey: Key.claudePollingInterval)
+        changed?(.polling)
+    }
+
+    private static func migratedInterval(
+        saved: Double,
+        legacy: Double,
+        choices: [TimeInterval],
+        fallback: TimeInterval
+    ) -> TimeInterval {
+        if choices.contains(saved) { return saved }
+        if choices.contains(legacy) { return legacy }
+        return fallback
     }
 
     func setProvider(_ provider: ProviderKind, visible: Bool) {

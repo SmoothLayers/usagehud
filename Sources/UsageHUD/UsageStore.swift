@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 enum PollingSchedule {
-    static let codexInterval: TimeInterval = AppSettings.defaultPollingInterval
-    static let claudeInterval: TimeInterval = AppSettings.defaultPollingInterval
+    static let codexInterval: TimeInterval = AppSettings.defaultCodexPollingInterval
+    static let claudeInterval: TimeInterval = AppSettings.defaultClaudePollingInterval
 }
 
 enum ClaudePolling {
@@ -113,7 +113,7 @@ final class UsageStore: ObservableObject {
     }
 
     func start() {
-        AppLog.info("scheduler", "Independent polling started interval=\(Int(settings.pollingInterval))s")
+        AppLog.info("scheduler", "Independent polling started codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s")
         if settings.showCodex {
             refreshCodex(trigger: "startup")
             scheduleCodexTimer()
@@ -150,9 +150,9 @@ final class UsageStore: ObservableObject {
         guard codexTimer != nil || claudeTimer != nil || codexLastSuccess != nil || claudeLastSuccess != nil else { return }
         if settings.showCodex { scheduleCodexTimer() }
         if settings.showClaude, claudeRateLimitedUntil == nil, !claudeIsRefreshing {
-            scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "settings")
+            scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "settings")
         }
-        AppLog.info("scheduler", "Polling interval changed interval=\(Int(settings.pollingInterval))s")
+        AppLog.info("scheduler", "Polling interval changed codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s")
     }
 
     func applyProviderSettings() {
@@ -191,12 +191,12 @@ final class UsageStore: ObservableObject {
     private func scheduleCodexTimer() {
         codexTimer?.invalidate()
         guard settings.showCodex else { return }
-        let interval = settings.pollingInterval
+        let interval = settings.codexPollingInterval
         codexNextRefresh = Date.now.addingTimeInterval(interval)
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.codexNextRefresh = Date.now.addingTimeInterval(self.settings.pollingInterval)
+                self.codexNextRefresh = Date.now.addingTimeInterval(self.settings.codexPollingInterval)
                 self.updateClaudeCooldownNotice()
                 self.refreshCodex(trigger: "timer")
             }
@@ -290,7 +290,7 @@ final class UsageStore: ObservableObject {
             claudeBackoffAttempt = 0
             claudeRateLimitedUntil = nil
             ClaudeCooldownPersistence.clear(from: defaults)
-            scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "normal")
+            scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "normal")
 
         case let .failure(error):
             if case let UsageError.rateLimited(retryAfter) = error {
@@ -314,12 +314,12 @@ final class UsageStore: ObservableObject {
                 ClaudeCooldownPersistence.clear(from: defaults)
                 AppLog.error("scheduler", "Claude refresh failed; retaining last result: \(error.localizedDescription)")
                 claudeNotice = "Update failed · showing last result"
-                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "error-retry")
+                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "error-retry")
             } else {
                 ClaudeCooldownPersistence.clear(from: defaults)
                 AppLog.error("scheduler", "Claude refresh failed: \(error.localizedDescription)")
                 claude = .failed(error.localizedDescription)
-                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "error-retry")
+                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "error-retry")
             }
         }
         usageDisplayChanged?()
