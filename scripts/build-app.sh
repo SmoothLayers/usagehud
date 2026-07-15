@@ -8,7 +8,7 @@ CONTENTS="$APP_DIR/Contents"
 
 # Single source of truth for the bundle version. CI passes APP_VERSION from the
 # workflow input; local builds fall back to the default below.
-APP_VERSION="${APP_VERSION:-0.6.5}"
+APP_VERSION="${APP_VERSION:-0.6.6}"
 if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "APP_VERSION must look like MAJOR.MINOR.PATCH (got '$APP_VERSION')" >&2
   exit 1
