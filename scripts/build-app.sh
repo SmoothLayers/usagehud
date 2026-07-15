@@ -6,6 +6,19 @@ APP_NAME="Usage HUD"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 
+# Single source of truth for the bundle version. CI passes APP_VERSION from the
+# workflow input; local builds fall back to the default below.
+APP_VERSION="${APP_VERSION:-0.6.2}"
+if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "APP_VERSION must look like MAJOR.MINOR.PATCH (got '$APP_VERSION')" >&2
+  exit 1
+fi
+# Sparkle compares CFBundleVersion, so it must increase with every release.
+# Deriving it from the version keeps it monotonic without manual bumping.
+# (0.6.1 -> 601, comfortably above the last hand-maintained value of 26.)
+IFS='.' read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$APP_VERSION"
+BUILD_NUMBER=$(( VERSION_MAJOR * 10000 + VERSION_MINOR * 100 + VERSION_PATCH ))
+
 cd "$ROOT"
 mkdir -p "$ROOT/.build/clang-cache" "$ROOT/.build/module-cache" "$ROOT/.build/cache"
 export CLANG_MODULE_CACHE_PATH="$ROOT/.build/clang-cache"
@@ -36,8 +49,8 @@ echo "Writing Info.plist"
   -c "Add :CFBundleExecutable string 'UsageHUD'" \
   -c "Add :CFBundleIconFile string 'UsageHUD.icns'" \
   -c "Add :CFBundlePackageType string 'APPL'" \
-  -c "Add :CFBundleShortVersionString string '0.6.1'" \
-  -c "Add :CFBundleVersion string '26'" \
+  -c "Add :CFBundleShortVersionString string '$APP_VERSION'" \
+  -c "Add :CFBundleVersion string '$BUILD_NUMBER'" \
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \

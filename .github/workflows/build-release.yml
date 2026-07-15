@@ -6,7 +6,7 @@ on:
       version:
         description: Release version without the v prefix
         required: true
-        default: 0.6.1
+        default: 0.6.2
 
 permissions:
   contents: read
@@ -22,7 +22,18 @@ jobs:
         run: swift test
 
       - name: Build app bundle
+        env:
+          APP_VERSION: ${{ inputs.version }}
         run: ./scripts/build-app.sh
+
+      - name: Verify embedded bundle version matches the release input
+        run: |
+          set -euo pipefail
+          EMBEDDED="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'dist/Usage HUD.app/Contents/Info.plist')"
+          if [[ "$EMBEDDED" != "${{ inputs.version }}" ]]; then
+            echo "Bundle version '$EMBEDDED' does not match release input '${{ inputs.version }}'" >&2
+            exit 1
+          fi
 
       - name: Create release archive
         run: ditto -c -k --sequesterRsrc --keepParent "dist/Usage HUD.app" "Usage-HUD-v${{ inputs.version }}-macOS.zip"
