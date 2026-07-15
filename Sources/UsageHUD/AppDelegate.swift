@@ -109,6 +109,42 @@ enum WindowSizing {
 
 }
 
+enum FullScreenSpaceDetection {
+    // A layer-0 window exactly the size of a screen is a full screen app (or a
+    // borderless window covering the whole screen, which the HUD should defer
+    // to just the same). The HUD's own windows are excluded by owner PID.
+    static func fullScreenWindowPresent(
+        entries: [[String: Any]],
+        screenSizes: [CGSize],
+        excludingPID pid: Int
+    ) -> Bool {
+        entries.contains { entry in
+            guard
+                (entry[kCGWindowLayer as String] as? Int) == 0,
+                (entry[kCGWindowOwnerPID as String] as? Int) != pid,
+                let boundsValue = entry[kCGWindowBounds as String] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsValue)
+            else { return false }
+            return screenSizes.contains { size in
+                abs(size.width - bounds.width) < 1 && abs(size.height - bounds.height) < 1
+            }
+        }
+    }
+
+    @MainActor
+    static func activeSpaceHasFullScreenWindow() -> Bool {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let entries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        return fullScreenWindowPresent(
+            entries: entries,
+            screenSizes: NSScreen.screens.map { $0.frame.size },
+            excludingPID: Int(ProcessInfo.processInfo.processIdentifier)
+        )
+    }
+}
+
 enum WindowInteraction {
     static func styleMask(locked: Bool) -> NSWindow.StyleMask {
         var mask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .fullSizeContentView]
@@ -144,6 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var alwaysOnTopItem: NSMenuItem!
     private var isApplyingProgrammaticResize = false
     private var panelOrderingRaised = false
+    private var panelHiddenForFullScreen = false
+    private var panelUserHidden = false
     private var mouseMonitors: [Any] = []
     private let notificationService = UsageNotificationService()
     private let updaterController = SPUStandardUpdaterController(
@@ -280,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings: settings,
                 hide: { [weak self] in
                     AppLog.info("window", "HUD hidden from close button")
+                    self?.panelUserHidden = true
                     self?.panel.orderOut(nil)
                 }
             )
@@ -373,13 +412,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lockHUDItem?.state = settings.lockHUD ? .on : .off
         clickThroughItem?.state = settings.clickThrough ? .on : .off
         alwaysOnTopItem?.state = settings.alwaysOnTop ? .on : .off
-        if settings.alwaysOnTop, panel.isVisible {
+        if settings.alwaysOnTop, panel.isVisible || panelHiddenForFullScreen {
+            panelHiddenForFullScreen = false
             panel.orderFrontRegardless()
-        } else if wasAlwaysOnTop, panel.isVisible {
+        } else if wasAlwaysOnTop {
             // Reset the ordering established by status-bar level. Merely changing
             // the level can leave the panel ahead of the active app until macOS
             // performs another window-ordering operation.
-            sinkPanelIfNeeded(reason: "always-on-top-disabled")
+            updatePanelOrdering(reason: "always-on-top-disabled")
         }
         AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough) alwaysOnTop=\(settings.alwaysOnTop)")
     }
@@ -483,11 +523,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Activating the app (opening Settings, the setup assistant, or a
         // permission alert) raises every window it owns, including the HUD
         // panel. Sink it again whenever Always on Top is off.
-        sinkPanelIfNeeded(reason: "app-activated")
+        updatePanelOrdering(reason: "app-activated")
     }
 
     @objc private func workspaceOrderingChanged(_ notification: Notification) {
-        sinkPanelIfNeeded(reason: "workspace-changed")
+        updatePanelOrdering(reason: "workspace-changed")
+    }
+
+    private func updatePanelOrdering(reason: String) {
+        guard panel != nil, !settings.alwaysOnTop else { return }
+        if FullScreenSpaceDetection.activeSpaceHasFullScreenWindow() {
+            // Without Always on Top the HUD must never cover a full screen
+            // app, and no ordering call can push a canJoinAllSpaces panel
+            // behind a full screen window — the window server hosts such
+            // panels above the fullscreen Space. Take it off screen instead.
+            if panel.isVisible {
+                panel.orderOut(nil)
+                panelHiddenForFullScreen = true
+                AppLog.info("window", "Panel hidden reason=\(reason) fullscreen-space")
+            }
+            return
+        }
+        if panelHiddenForFullScreen, !panelUserHidden {
+            panelHiddenForFullScreen = false
+            // orderBack re-inserts the panel at the back of the normal level,
+            // so it returns already sunk.
+            panel.orderBack(nil)
+            AppLog.info("window", "Panel restored reason=\(reason) fullscreen-space-left")
+            return
+        }
+        sinkPanelIfNeeded(reason: reason)
     }
 
     private func sinkPanelIfNeeded(reason: String) {
@@ -700,6 +765,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showPanel() {
+        panelUserHidden = false
+        panelHiddenForFullScreen = false
         if settings.alwaysOnTop {
             panel.orderFrontRegardless()
         } else {

@@ -316,6 +316,43 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(PollingSchedule.claudeInterval, 120)
     }
 
+    func testFullScreenSpaceDetectionMatchesScreenSizedNormalWindows() {
+        let screen = CGSize(width: 1_728, height: 1_117)
+        func entry(layer: Int, pid: Int, width: Double, height: Double) -> [String: Any] {
+            [
+                "kCGWindowLayer": layer,
+                "kCGWindowOwnerPID": pid,
+                "kCGWindowBounds": ["X": 0.0, "Y": 0.0, "Width": width, "Height": height],
+            ]
+        }
+
+        XCTAssertTrue(FullScreenSpaceDetection.fullScreenWindowPresent(
+            entries: [entry(layer: 0, pid: 999, width: 1_728, height: 1_117)],
+            screenSizes: [screen],
+            excludingPID: 1
+        ))
+        // The HUD's own windows never count as a full screen app.
+        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
+            entries: [entry(layer: 0, pid: 1, width: 1_728, height: 1_117)],
+            screenSizes: [screen],
+            excludingPID: 1
+        ))
+        // Elevated layers (menu bar, Dock) and ordinary windows never match.
+        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
+            entries: [
+                entry(layer: 25, pid: 999, width: 1_728, height: 1_117),
+                entry(layer: 0, pid: 999, width: 1_200, height: 800),
+            ],
+            screenSizes: [screen],
+            excludingPID: 1
+        ))
+        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
+            entries: [],
+            screenSizes: [screen],
+            excludingPID: 1
+        ))
+    }
+
     func testClaudePollingEnforcesFiveMinuteFloorAndUpwardJitter() {
         XCTAssertEqual(ClaudePolling.interval(from: 120), 300)
         XCTAssertEqual(ClaudePolling.interval(from: 300), 300)
