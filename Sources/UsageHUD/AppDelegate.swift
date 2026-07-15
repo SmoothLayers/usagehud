@@ -143,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var clickThroughItem: NSMenuItem!
     private var alwaysOnTopItem: NSMenuItem!
     private var isApplyingProgrammaticResize = false
+    private var panelOrderingRaised = false
+    private var mouseMonitors: [Any] = []
     private let notificationService = UsageNotificationService()
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: false,
@@ -183,6 +185,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil
         )
+        // App and Space switches are not enough: clicking the panel raises
+        // it, and no workspace notification fires while the user keeps
+        // working inside the app that is already active. Track when the
+        // panel gets raised by a click and sink it again on the next click
+        // that lands anywhere else.
+        if let localMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                if let self, event.window === self.panel {
+                    self.panelOrderingRaised = true
+                }
+            }
+            return event
+        }) {
+            mouseMonitors.append(localMonitor)
+        }
+        if let globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panelOrderingRaised else { return }
+                self.sinkPanelIfNeeded(reason: "outside-click")
+            }
+        }) {
+            mouseMonitors.append(globalMonitor)
+        }
         updaterController.startUpdater()
         applyUpdateSettings()
         store.compactChanged = { [weak self] compact in
@@ -354,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Reset the ordering established by status-bar level. Merely changing
             // the level can leave the panel ahead of the active app until macOS
             // performs another window-ordering operation.
-            panel.orderBack(nil)
+            sinkPanelIfNeeded(reason: "always-on-top-disabled")
         }
         AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough) alwaysOnTop=\(settings.alwaysOnTop)")
     }
@@ -467,8 +492,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func sinkPanelIfNeeded(reason: String) {
         guard panel != nil, panel.isVisible, !settings.alwaysOnTop else { return }
-        panel.orderBack(nil)
-        AppLog.info("window", "Panel sunk reason=\(reason) alwaysOnTop=false")
+        panelOrderingRaised = false
+        // orderBack(nil) is unreliable while this app is inactive: AppKit
+        // constrains plain ordering calls to the app's own windows, so the
+        // panel keeps floating above every other app. Ordering relative to
+        // an explicit window number goes through the window server and works
+        // across applications, so put the panel below the bottommost
+        // on-screen normal-level window instead.
+        if let bottommost = Self.bottommostNormalWindowNumber(excluding: panel.windowNumber) {
+            panel.order(.below, relativeTo: bottommost)
+            AppLog.info("window", "Panel sunk reason=\(reason) below=\(bottommost) alwaysOnTop=false")
+        } else {
+            panel.orderBack(nil)
+            AppLog.info("window", "Panel sunk reason=\(reason) fallback=orderBack alwaysOnTop=false")
+        }
+    }
+
+    private static func bottommostNormalWindowNumber(excluding panelWindowNumber: Int) -> Int? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let entries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        // The list is ordered front to back, so the last normal-level entry
+        // is the bottommost window on screen.
+        return entries.last(where: { entry in
+            (entry[kCGWindowLayer as String] as? Int) == 0
+                && (entry[kCGWindowNumber as String] as? Int) != panelWindowNumber
+        })?[kCGWindowNumber as String] as? Int
     }
 
     @objc private func showHUD() {
@@ -653,7 +703,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settings.alwaysOnTop {
             panel.orderFrontRegardless()
         } else {
+            // orderFront raises the panel just like a click does, so flag it
+            // for sinking on the next click outside the panel.
             panel.orderFront(nil)
+            panelOrderingRaised = true
         }
     }
 
