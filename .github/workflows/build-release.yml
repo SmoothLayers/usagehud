@@ -1,0 +1,35 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        default: 0.4.0
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+
+      - name: Create release archive
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/Usage HUD.app" "Usage-HUD-v${{ inputs.version }}-macOS.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Usage-HUD-v${{ inputs.version }}-macOS
+          path: Usage-HUD-v${{ inputs.version }}-macOS.zip
+          if-no-files-found: error

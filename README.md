@@ -19,6 +19,8 @@ Open **Settings…** from the menu-bar gauge to choose a 2, 5, 10, or 15-minute 
 
 The appearance controls include text scale, usage-bar thickness, corner radius, HUD opacity, independent provider colors, and vertical or horizontal compact layouts. **Lock HUD** prevents movement and resizing; **Click Through** sends mouse input to the window underneath. Both remain available from the menu-bar menu.
 
+Usage changes use restrained meter, number, status, and refresh animations. macOS **Reduce Motion** is respected automatically. On first launch, a three-step setup assistant checks for the Codex and Claude CLIs, selects providers and HUD layout, and optionally requests notification permission. The assistant can be run again at any time from the menu-bar menu.
+
 Optional local notifications support a separate 0–30% warning threshold for each provider’s primary and secondary windows, plus reset detection. Automatic update checks use the public GitHub Releases API at most once per day and can be disabled; Usage HUD never silently downloads or installs an update.
 
 ## Install

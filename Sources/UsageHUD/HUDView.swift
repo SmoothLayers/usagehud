@@ -9,6 +9,8 @@ private enum HUDPalette {
 struct HUDView: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var settings: AppSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var statusPulse = false
     let hide: () -> Void
 
     var body: some View {
@@ -20,6 +22,12 @@ struct HUDView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                statusPulse = true
+            }
+        }
     }
 
     private var expandedHUD: some View {
@@ -128,13 +136,20 @@ struct HUDView: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 5, height: 5)
+                .shadow(color: statusColor.opacity(statusPulse ? 0.8 : 0.2), radius: statusPulse ? 5 : 1)
+                .opacity(reduceMotion ? 1 : (statusPulse ? 1 : 0.65))
             Spacer()
             Button(action: store.refresh) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Color.white.opacity(0.58))
-                    .rotationEffect(.degrees(store.isRefreshing ? 180 : 0))
-                    .animation(store.isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: store.isRefreshing)
+                    .rotationEffect(.degrees(store.isRefreshing && !reduceMotion ? 180 : 0))
+                    .animation(
+                        store.isRefreshing && !reduceMotion
+                            ? .linear(duration: 0.8).repeatForever(autoreverses: false)
+                            : .easeOut(duration: 0.2),
+                        value: store.isRefreshing
+                    )
             }
             .help("Refresh now")
             Button(action: store.toggleCompact) {
@@ -158,6 +173,7 @@ struct HUDView: View {
 private struct CompactRefreshRail: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var settings: AppSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 6) {
@@ -193,11 +209,11 @@ private struct CompactRefreshRail: View {
             Spacer(minLength: 8)
             Button(action: store.refresh) {
                 Image(systemName: "arrow.clockwise")
-                    .rotationEffect(.degrees(store.isRefreshing ? 180 : 0))
+                    .rotationEffect(.degrees(store.isRefreshing && !reduceMotion ? 180 : 0))
                     .animation(
-                        store.isRefreshing
+                        store.isRefreshing && !reduceMotion
                             ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                            : .default,
+                            : .easeOut(duration: 0.2),
                         value: store.isRefreshing
                     )
                     .frame(width: 22, height: 22)
@@ -222,6 +238,7 @@ private struct CompactRefreshRail: View {
 }
 
 private struct CompactUsageStrip: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let kind: ProviderKind
     let state: ProviderState
     let notice: String?
@@ -274,6 +291,8 @@ private struct CompactUsageStrip: View {
                     .font(.system(size: 19 * textScale, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(Color.white.opacity(0.95))
+                    .contentTransition(.numericText(value: usage.primary.remainingPercent))
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: usage.primary.remainingPercent)
                 Text("%")
                     .font(.system(size: 10 * textScale, weight: .black, design: .monospaced))
                     .foregroundStyle(accent)
@@ -344,6 +363,7 @@ private struct CompactUsageStrip: View {
 }
 
 private struct ProviderCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let kind: ProviderKind
     let state: ProviderState
     let compact: Bool
@@ -427,6 +447,8 @@ private struct ProviderCard: View {
                     .font(.system(size: (compact ? 25 : 36) * textScale, weight: .medium, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(Color.white.opacity(0.94))
+                    .contentTransition(.numericText(value: usage.primary.remainingPercent))
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: usage.primary.remainingPercent)
                 Text("%")
                     .font(.system(size: (compact ? 12 : 14) * textScale, weight: .bold, design: .monospaced))
                     .foregroundStyle(accent)
@@ -524,18 +546,34 @@ private struct UsageBar: View {
     let remaining: Double
     let accent: Color
     let thickness: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var displayedRemaining: Double = 0
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.white.opacity(0.08))
                 Capsule()
-                    .fill(accent)
-                    .frame(width: max(3, geometry.size.width * remaining / 100))
+                    .fill(
+                        LinearGradient(
+                            colors: [accent.opacity(0.72), accent, Color.white.opacity(0.88)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(3, geometry.size.width * displayedRemaining / 100))
                     .shadow(color: accent.opacity(0.45), radius: 5)
             }
         }
         .frame(height: thickness)
+        .onAppear { displayedRemaining = remaining }
+        .onChange(of: remaining) { _, newValue in
+            if reduceMotion {
+                displayedRemaining = newValue
+            } else {
+                withAnimation(.smooth(duration: 0.65)) { displayedRemaining = newValue }
+            }
+        }
         .accessibilityLabel("\(Int(remaining.rounded())) percent remaining")
     }
 }

@@ -122,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let store: UsageStore
     private var panel: NSPanel!
     private var settingsWindow: NSWindow?
+    private var setupWindow: NSWindow?
     private var statusItem: NSStatusItem!
     private var launchAtLoginItem: NSMenuItem!
     private var compactModeItem: NSMenuItem!
@@ -135,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let lastUpdateCheckKey = "lastAutomaticUpdateCheck"
     private let notificationService = UsageNotificationService()
     private let updateChecker = UpdateChecker()
+    private let setupCompletedKey = "firstRunSetupCompleted"
 
     override init() {
         let settings = AppSettings()
@@ -191,9 +193,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.resizePanel(compact: self.store.isCompact)
             }
         }
-        store.start()
         configureUpdateChecks()
-        panel.orderFrontRegardless()
+        if UserDefaults.standard.bool(forKey: setupCompletedKey) {
+            store.start()
+            panel.orderFrontRegardless()
+        } else {
+            showSetupAssistant(firstRun: true)
+        }
     }
 
     private func createPanel() {
@@ -269,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clickThroughItem.state = settings.clickThrough ? .on : .off
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: "Run Setup Assistant…", action: #selector(runSetupAssistant), keyEquivalent: "")
         updateItem = menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(withTitle: "Open Logs…", action: #selector(openLogs), keyEquivalent: "l")
         menu.addItem(.separator())
@@ -539,6 +546,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         AppLog.info("app", "Settings opened")
+    }
+
+    @objc private func runSetupAssistant() {
+        showSetupAssistant(firstRun: false)
+    }
+
+    private func showSetupAssistant(firstRun: Bool) {
+        if setupWindow == nil {
+            let view = FirstRunSetupView(
+                settings: settings,
+                store: store,
+                requestNotifications: { [weak self] in
+                    guard let self else { return false }
+                    let allowed = await self.notificationService.requestPermission()
+                    if allowed {
+                        self.store.setUsageAlertsEnabled(true)
+                        self.usageAlertsItem.state = .on
+                    }
+                    return allowed
+                },
+                finish: { [weak self] in self?.finishSetup(firstRun: firstRun) }
+            )
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 620, height: 500),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Set Up Usage HUD"
+            window.titlebarAppearsTransparent = true
+            window.backgroundColor = NSColor(red: 0.045, green: 0.055, blue: 0.068, alpha: 1)
+            window.contentView = NSHostingView(rootView: view)
+            window.isReleasedWhenClosed = false
+            window.center()
+            setupWindow = window
+        }
+        setupWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        AppLog.info("setup", "Setup assistant opened firstRun=\(firstRun)")
+    }
+
+    private func finishSetup(firstRun: Bool) {
+        UserDefaults.standard.set(true, forKey: setupCompletedKey)
+        setupWindow?.orderOut(nil)
+        setupWindow = nil
+        if firstRun { store.start() }
+        repairPanelFrame()
+        panel.orderFrontRegardless()
+        AppLog.info("setup", "Setup assistant completed firstRun=\(firstRun)")
     }
 
     private func repairPanelFrame() {

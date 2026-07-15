@@ -26,8 +26,8 @@ cp "$ROOT/assets/UsageHUD.icns" "$CONTENTS/Resources/UsageHUD.icns"
   -c "Add :CFBundleExecutable string 'UsageHUD'" \
   -c "Add :CFBundleIconFile string 'UsageHUD.icns'" \
   -c "Add :CFBundlePackageType string 'APPL'" \
-  -c "Add :CFBundleShortVersionString string '0.3.0'" \
-  -c "Add :CFBundleVersion string '22'" \
+  -c "Add :CFBundleShortVersionString string '0.4.0'" \
+  -c "Add :CFBundleVersion string '23'" \
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \
