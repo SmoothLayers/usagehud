@@ -1,52 +1,106 @@
+<div align="center">
+
 # Usage HUD
 
-A private macOS heads-up display for Codex and Claude subscription limits. It floats above normal windows and full-screen apps, refreshes automatically, and lives in the menu bar when hidden.
+**A tiny, private macOS heads-up display for your Codex and Claude subscription limits.**
 
-![Usage HUD showing Codex and Claude usage](artifacts/v030-expanded-custom.png)
+Always know how much of your 5-hour and weekly usage windows is left —
+at a glance, without leaving your editor or asking the CLI.
 
-## What it reads
+[![Latest release](https://img.shields.io/github/v/release/SmoothLayers/usagehud?label=release&color=54E8BA)](https://github.com/SmoothLayers/usagehud/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/SmoothLayers/usagehud/total?color=63C5FF)](https://github.com/SmoothLayers/usagehud/releases)
+![Platform](https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-F59363)
+![Made with Swift](https://img.shields.io/badge/Swift-6-FA7343?logo=swift&logoColor=white)
 
-- **Codex:** the installed `codex app-server` interface and its `account/rateLimits/read` request.
-- **Claude:** the existing Claude Code login in macOS Keychain and Claude's account usage endpoint.
+<img src="artifacts/usage-hud-no-shadow-preview.png" alt="Usage HUD showing Codex and Claude remaining usage side by side" width="760">
 
-Credentials never leave your Mac except in the provider's own authenticated request. Usage HUD does not store or log tokens.
+</div>
 
-Diagnostic logs are stored locally at `~/Library/Application Support/Usage HUD/usage-hud.log`. Choose **Open Logs…** from the menu-bar gauge to inspect refreshes, HTTP status codes, `Retry-After` values, and backoff decisions. Logs rotate at 1 MB and never include credentials or response bodies.
+## What is this?
 
-Codex and Claude use independent timers and refresh every two minutes by default. Each provider schedules independently, so one cannot delay the other. The HUD shows when each reading last succeeded and when its next refresh is due. If Claude returns a rate limit, Usage HUD logs the raw `Retry-After` value, replaces its normal timer with a one-shot retry for that delay, and leaves Codex's timer untouched. During the cooldown, the HUD keeps the last successful Claude reading visible with a **STALE** marker. The cooldown survives an app restart, and an unusable or zero-second `Retry-After` value falls back to a conservative backoff.
+If you code with **Codex CLI** and **Claude Code** on subscription plans, your usage is metered
+in rolling windows (a short 5-hour window plus a weekly one) — and the only way to check them is
+to ask each tool individually. Usage HUD puts both meters in one small, always-available panel:
 
-Open **Settings…** from the menu-bar gauge to choose a 2, 5, 10, or 15-minute refresh cadence, show or hide either provider, and optionally show live values such as `C72 · A39` directly in the menu bar. Hidden providers are not polled. Reset and refresh countdowns can be enabled independently; compact mode keeps each reset timer inside its provider strip, places polling countdowns at the upper-left, and keeps a working refresh button at the upper-right.
+- **Remaining percentage** for each provider's current window, with a live countdown to the next reset
+- **Weekly window** remaining at a glance
+- A **menu bar readout** (optional) like `C72 · A39`, so you don't even need the panel open
+- **Local notifications** when you're running low and when a window resets
 
-The appearance controls include text scale, usage-bar thickness, corner radius, HUD opacity, independent provider colors, and vertical or horizontal compact layouts. **Always on Top** can keep the HUD above other windows or return it to normal window level. **Lock HUD** prevents movement and resizing; **Click Through** sends mouse input to the window underneath. All three remain available from the menu-bar menu.
-
-Usage changes use restrained meter, number, status, and refresh animations. macOS **Reduce Motion** is respected automatically. On first launch, a three-step setup assistant checks for the Codex and Claude CLIs, selects providers and HUD layout, and optionally requests notification permission. The assistant can be run again at any time from the menu-bar menu.
-
-Optional local notifications support a separate 0–30% warning threshold for each provider’s primary and secondary windows, plus reset detection. Secure Sparkle updates are checked once per day and downloaded and installed automatically by default. Update archives are verified with a dedicated Ed25519 signature before extraction.
+Everything runs on your Mac. There is no server, no account, no analytics, and no separate API key —
+it reuses the CLI sign-ins you already have.
 
 ## Install
 
-Download the macOS zip from the [latest release](https://github.com/SmoothLayers/usagehud/releases/latest), unzip it, and open **Usage HUD.app**. This personal build is ad-hoc signed but not Apple-notarized, so macOS may ask you to control-click the app and choose **Open** on first launch.
+1. Download the zip from the [**latest release**](https://github.com/SmoothLayers/usagehud/releases/latest)
+2. Unzip and open **Usage HUD.app**
+3. This personal build is ad-hoc signed but not Apple-notarized, so on first launch
+   control-click the app and choose **Open** (or allow it under *System Settings → Privacy & Security*)
 
-## Build and run
+A three-step setup assistant checks for the Codex and Claude CLIs, lets you pick providers and a
+layout, and optionally enables notifications. Requires **macOS 14+** on **Apple silicon**, with
+`codex` and/or `claude` installed and signed in.
+
+> The first Claude refresh may trigger a macOS Keychain prompt — choose **Always Allow** so the
+> HUD can refresh in the background.
+
+## How it works
+
+| Provider | Source |
+|----------|--------|
+| **Codex** | Your installed `codex` CLI's `app-server` interface (`account/rateLimits/read`) |
+| **Claude** | Your existing Claude Code sign-in from the macOS Keychain, sent only to Anthropic's own usage endpoint |
+
+**Privacy:** credentials never leave your Mac except inside each provider's own authenticated
+request. Usage HUD does not store or log tokens. Diagnostic logs stay local
+(`~/Library/Application Support/Usage HUD/usage-hud.log`, rotated at 1 MB, never containing
+credentials or response bodies) and can be opened from *Settings → Maintenance*.
+
+**Polling:** each provider refreshes independently every 2 minutes by default (2/5/10/15 min
+selectable), so one provider can never delay the other. Hidden providers aren't polled at all.
+If Claude rate-limits the usage endpoint, the HUD honors the `Retry-After` header (with a
+conservative fallback backoff), keeps the last good reading visible with a **STALE** marker, and
+remembers the cooldown across restarts.
+
+## Everyday use
+
+- **Move** it by dragging any empty area; **resize** from any edge — expanded and compact modes each remember their own size and position
+- **Compact mode** shrinks each provider to a slim strip, stacked vertically or side by side
+- **Always on Top** keeps the HUD above other windows (including full-screen apps) — or turn it off to let it behave like a normal window
+- **Lock HUD** pins it in place; **Click Through** passes mouse input to whatever is underneath
+- Hide it anytime — the **gauge icon in the menu bar** brings it back, and repairs the window if it ever ends up off-screen
+
+## Make it yours
+
+<div align="center">
+<img src="artifacts/v030-expanded-custom.png" alt="Usage HUD with customized accent colors, showing reset and refresh countdowns" width="760">
+</div>
+
+Settings covers text size, meter thickness, corner radius, opacity, an independent accent color
+per provider, reset/refresh countdown toggles, and the menu bar readout. Usage alerts support a
+separate warning threshold (off–30%) for each provider's current and weekly windows, plus
+automatic reset detection. Animations are restrained, and macOS **Reduce Motion** is respected.
+
+Updates are delivered by [Sparkle](https://sparkle-project.org): checked daily, verified with a
+dedicated Ed25519 signature before extraction, and installed automatically (you can turn this off
+or use **Check Now** in Settings).
+
+## Build from source
 
 Both `codex` and `claude` should already be signed in.
 
 ```sh
-chmod +x scripts/build-app.sh
 ./scripts/build-app.sh
 open "dist/Usage HUD.app"
 ```
 
-The first Claude refresh may trigger a macOS Keychain permission prompt. Choose **Always Allow** so the HUD can refresh in the background.
-
-Drag the HUD from any empty area. Resize it from any window border; normal and compact modes remember their own sizes. Choose **Reset Window Size** from the menu-bar gauge—or use the reset control in Settings—to restore the active mode to its normal dimensions. Usage HUD also remembers its position and restores it the next time it opens. If a display is disconnected, the window is moved onto a visible screen. Use the top-right controls to refresh, switch to compact mode, or hide it. Compact mode can stack Codex and Claude vertically or place them side by side. If the window is ever off-screen, **Show Usage HUD** repairs its size and moves it back onto a visible display. Once hidden, use the gauge icon in the menu bar to show it again.
+Run the tests with `swift test`.
 
 ## Troubleshooting
 
-- **CLI not found:** make sure `codex` and `claude` are installed. NVM installations are detected automatically.
-- **`env: node: No such file or directory`:** rebuild the app with the latest source. Usage HUD now carries the detected NVM binary directory into Codex's environment when launched from Finder.
-- **Sign in message:** run `codex login` or `claude auth login`, then choose **Refresh Now** in the menu bar.
-- **Claude login expired:** open Claude Code once and complete its login flow.
-- **Unexpected refresh behavior:** choose **Open Logs…** from the gauge menu and inspect the latest Claude or Codex entries.
-
-This app targets macOS 14 or newer and stays local; it does not require a server or separate API keys.
+| Symptom | Fix |
+|---------|-----|
+| CLI not found | Install `codex` / `claude`. Homebrew, `~/.local/bin`, NVM, and login-shell `PATH` setups are detected automatically |
+| "Sign in" message | Run `codex login` or `claude auth login`, then **Refresh Now** from the menu bar |
+| Claude login expired | Open Claude Code once and complete its login flow |
+| Unexpected refresh behavior | *Settings → Maintenance → Open Logs* shows every refresh, HTTP status, `Retry-After` value, and backoff decision |
