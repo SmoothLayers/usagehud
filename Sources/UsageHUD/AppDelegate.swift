@@ -165,6 +165,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         createPanel()
         createStatusItem()
         applyInteractionSettings()
+        // Clicking the non-activating panel raises it to the front of the
+        // normal window level without ever activating this app, and windows
+        // that join all Spaces keep that raised ordering across Space
+        // switches. Sink the panel whenever the user changes app or Space so
+        // it can never linger above other windows while Always on Top is off.
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter.addObserver(
+            self,
+            selector: #selector(workspaceOrderingChanged),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+        workspaceCenter.addObserver(
+            self,
+            selector: #selector(workspaceOrderingChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
         updaterController.startUpdater()
         applyUpdateSettings()
         store.compactChanged = { [weak self] compact in
@@ -439,12 +457,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         // Activating the app (opening Settings, the setup assistant, or a
         // permission alert) raises every window it owns, including the HUD
-        // panel. Because the app is a non-activating accessory, nothing later
-        // pushes the panel back down, so it would linger above other apps'
-        // windows. Sink it again whenever Always on Top is off.
+        // panel. Sink it again whenever Always on Top is off.
+        sinkPanelIfNeeded(reason: "app-activated")
+    }
+
+    @objc private func workspaceOrderingChanged(_ notification: Notification) {
+        sinkPanelIfNeeded(reason: "workspace-changed")
+    }
+
+    private func sinkPanelIfNeeded(reason: String) {
         guard panel != nil, panel.isVisible, !settings.alwaysOnTop else { return }
         panel.orderBack(nil)
-        AppLog.info("window", "Panel sunk after app activation alwaysOnTop=false")
+        AppLog.info("window", "Panel sunk reason=\(reason) alwaysOnTop=false")
     }
 
     @objc private func showHUD() {
