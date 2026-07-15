@@ -2,7 +2,7 @@
 
 A private macOS heads-up display for Codex and Claude subscription limits. It floats above normal windows and full-screen apps, refreshes automatically, and lives in the menu bar when hidden.
 
-![Usage HUD showing Codex and Claude usage](artifacts/usage-hud-no-shadow-preview.png)
+![Usage HUD showing Codex and Claude usage](artifacts/v030-expanded-custom.png)
 
 ## What it reads
 
@@ -13,7 +13,13 @@ Credentials never leave your Mac except in the provider's own authenticated requ
 
 Diagnostic logs are stored locally at `~/Library/Application Support/Usage HUD/usage-hud.log`. Choose **Open Logs…** from the menu-bar gauge to inspect refreshes, HTTP status codes, `Retry-After` values, and backoff decisions. Logs rotate at 1 MB and never include credentials or response bodies.
 
-Codex and Claude use independent timers and refresh every two minutes. Each provider schedules independently, so one cannot delay the other. If Claude returns a rate limit, Usage HUD logs the raw `Retry-After` value, replaces its normal timer with a one-shot retry for that delay, and leaves Codex's timer untouched. During the cooldown, the HUD keeps the last successful Claude reading visible with a **STALE** marker. If no usable `Retry-After` value is supplied—including a zero-second value that would cause a rapid retry loop—Usage HUD uses a conservative fallback backoff.
+Codex and Claude use independent timers and refresh every two minutes by default. Each provider schedules independently, so one cannot delay the other. The HUD shows when each reading last succeeded and when its next refresh is due. If Claude returns a rate limit, Usage HUD logs the raw `Retry-After` value, replaces its normal timer with a one-shot retry for that delay, and leaves Codex's timer untouched. During the cooldown, the HUD keeps the last successful Claude reading visible with a **STALE** marker. The cooldown survives an app restart, and an unusable or zero-second `Retry-After` value falls back to a conservative backoff.
+
+Open **Settings…** from the menu-bar gauge to choose a 2, 5, 10, or 15-minute refresh cadence, show or hide either provider, and optionally show live values such as `C72 · A39` directly in the menu bar. Hidden providers are not polled. Reset and refresh countdowns can be enabled independently; compact mode keeps each reset timer inside its provider strip, places polling countdowns at the upper-left, and keeps a working refresh button at the upper-right.
+
+The appearance controls include text scale, usage-bar thickness, corner radius, HUD opacity, independent provider colors, and vertical or horizontal compact layouts. **Lock HUD** prevents movement and resizing; **Click Through** sends mouse input to the window underneath. Both remain available from the menu-bar menu.
+
+Optional local notifications support a separate 0–30% warning threshold for each provider’s primary and secondary windows, plus reset detection. Automatic update checks use the public GitHub Releases API at most once per day and can be disabled; Usage HUD never silently downloads or installs an update.
 
 ## Install
 
@@ -31,7 +37,7 @@ open "dist/Usage HUD.app"
 
 The first Claude refresh may trigger a macOS Keychain permission prompt. Choose **Always Allow** so the HUD can refresh in the background.
 
-Drag the HUD from any empty area. Usage HUD remembers its position and restores it the next time it opens; if a display is disconnected, the window is moved onto a visible screen. Use the top-right controls to refresh, switch to compact mode, or hide it. Compact mode shows Codex and Claude as two floating meter strips; toggle **Compact Mode** from the gauge menu to expand again. Clicking a strip does not hide or resize the HUD. If the window is ever off-screen, **Show Usage HUD** repairs its size and moves it back onto a visible display. Once hidden, use the gauge icon in the menu bar to show it again. The menu also contains **Launch at Login**.
+Drag the HUD from any empty area. Resize it from any window border; normal and compact modes remember their own sizes. Choose **Reset Window Size** from the menu-bar gauge—or use the reset control in Settings—to restore the active mode to its normal dimensions. Usage HUD also remembers its position and restores it the next time it opens. If a display is disconnected, the window is moved onto a visible screen. Use the top-right controls to refresh, switch to compact mode, or hide it. Compact mode can stack Codex and Claude vertically or place them side by side. If the window is ever off-screen, **Show Usage HUD** repairs its size and moves it back onto a visible display. Once hidden, use the gauge icon in the menu bar to show it again.
 
 ## Troubleshooting
 

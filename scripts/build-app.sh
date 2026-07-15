@@ -16,6 +16,7 @@ swift build -c release --disable-sandbox
 rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$ROOT/.build/release/UsageHUD" "$CONTENTS/MacOS/UsageHUD"
+cp "$ROOT/assets/UsageHUD.icns" "$CONTENTS/Resources/UsageHUD.icns"
 
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string '$APP_NAME'" \
   -c "Add :CFBundleDisplayName string '$APP_NAME'" \
@@ -23,9 +24,10 @@ cp "$ROOT/.build/release/UsageHUD" "$CONTENTS/MacOS/UsageHUD"
   -c "Add :CFBundleDevelopmentRegion string 'en'" \
   -c "Add :CFBundleIdentifier string 'com.smoothlayers.usagehud'" \
   -c "Add :CFBundleExecutable string 'UsageHUD'" \
+  -c "Add :CFBundleIconFile string 'UsageHUD.icns'" \
   -c "Add :CFBundlePackageType string 'APPL'" \
-  -c "Add :CFBundleShortVersionString string '0.1.13'" \
-  -c "Add :CFBundleVersion string '14'" \
+  -c "Add :CFBundleShortVersionString string '0.3.0'" \
+  -c "Add :CFBundleVersion string '22'" \
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \
