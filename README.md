@@ -71,6 +71,18 @@ remembers the cooldown across restarts.
 - **Lock HUD** pins it in place; **Click Through** passes mouse input to whatever is underneath
 - Hide it anytime — the **gauge icon in the menu bar** brings it back, and repairs the window if it ever ends up off-screen
 
+## Compact mode
+
+Choose a narrow vertical stack or place both providers side by side:
+
+<div align="center">
+<p><strong>Vertical</strong></p>
+<img src="artifacts/compact-vertical.png" alt="Usage HUD compact mode with Codex and Claude stacked vertically" width="350">
+
+<p><strong>Horizontal</strong></p>
+<img src="artifacts/compact-horizontal.png" alt="Usage HUD compact mode with Codex and Claude side by side" width="650">
+</div>
+
 ## Make it yours
 
 <div align="center">
