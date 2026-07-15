@@ -17,7 +17,7 @@ Codex and Claude use independent timers and refresh every two minutes by default
 
 Open **Settings…** from the menu-bar gauge to choose a 2, 5, 10, or 15-minute refresh cadence, show or hide either provider, and optionally show live values such as `C72 · A39` directly in the menu bar. Hidden providers are not polled. Reset and refresh countdowns can be enabled independently; compact mode keeps each reset timer inside its provider strip, places polling countdowns at the upper-left, and keeps a working refresh button at the upper-right.
 
-The appearance controls include text scale, usage-bar thickness, corner radius, HUD opacity, independent provider colors, and vertical or horizontal compact layouts. **Lock HUD** prevents movement and resizing; **Click Through** sends mouse input to the window underneath. Both remain available from the menu-bar menu.
+The appearance controls include text scale, usage-bar thickness, corner radius, HUD opacity, independent provider colors, and vertical or horizontal compact layouts. **Always on Top** can keep the HUD above other windows or return it to normal window level. **Lock HUD** prevents movement and resizing; **Click Through** sends mouse input to the window underneath. All three remain available from the menu-bar menu.
 
 Usage changes use restrained meter, number, status, and refresh animations. macOS **Reduce Motion** is respected automatically. On first launch, a three-step setup assistant checks for the Codex and Claude CLIs, selects providers and HUD layout, and optionally requests notification permission. The assistant can be run again at any time from the menu-bar menu.
 

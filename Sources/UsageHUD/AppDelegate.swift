@@ -115,6 +115,10 @@ enum WindowInteraction {
         if !locked { mask.insert(.resizable) }
         return mask
     }
+
+    static func level(alwaysOnTop: Bool) -> NSWindow.Level {
+        alwaysOnTop ? .statusBar : .normal
+    }
 }
 
 @MainActor
@@ -131,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var usageAlertsItem: NSMenuItem!
     private var lockHUDItem: NSMenuItem!
     private var clickThroughItem: NSMenuItem!
+    private var alwaysOnTopItem: NSMenuItem!
     private var updateItem: NSMenuItem!
     private var isApplyingProgrammaticResize = false
     private let notificationService = UsageNotificationService()
@@ -212,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .statusBar
+        panel.level = WindowInteraction.level(alwaysOnTop: settings.alwaysOnTop)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -274,6 +279,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lockHUDItem.state = settings.lockHUD ? .on : .off
         clickThroughItem = menu.addItem(withTitle: "Click Through", action: #selector(toggleClickThrough), keyEquivalent: "")
         clickThroughItem.state = settings.clickThrough ? .on : .off
+        alwaysOnTopItem = menu.addItem(withTitle: "Always on Top", action: #selector(toggleAlwaysOnTop), keyEquivalent: "")
+        alwaysOnTopItem.state = settings.alwaysOnTop ? .on : .off
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Run Setup Assistant…", action: #selector(runSetupAssistant), keyEquivalent: "")
@@ -310,10 +317,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard panel != nil else { return }
         panel.isMovableByWindowBackground = !settings.lockHUD
         panel.ignoresMouseEvents = settings.clickThrough
+        panel.level = WindowInteraction.level(alwaysOnTop: settings.alwaysOnTop)
         panel.styleMask = WindowInteraction.styleMask(locked: settings.lockHUD)
         lockHUDItem?.state = settings.lockHUD ? .on : .off
         clickThroughItem?.state = settings.clickThrough ? .on : .off
-        AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough)")
+        alwaysOnTopItem?.state = settings.alwaysOnTop ? .on : .off
+        AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough) alwaysOnTop=\(settings.alwaysOnTop)")
     }
 
     private func applyUpdateSettings() {
@@ -446,6 +455,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleClickThrough() {
         settings.setClickThrough(!settings.clickThrough)
+    }
+
+    @objc private func toggleAlwaysOnTop() {
+        settings.setAlwaysOnTop(!settings.alwaysOnTop)
     }
 
     @objc private func checkForUpdates() {

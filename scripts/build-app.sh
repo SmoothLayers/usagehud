@@ -36,8 +36,8 @@ echo "Writing Info.plist"
   -c "Add :CFBundleExecutable string 'UsageHUD'" \
   -c "Add :CFBundleIconFile string 'UsageHUD.icns'" \
   -c "Add :CFBundlePackageType string 'APPL'" \
-  -c "Add :CFBundleShortVersionString string '0.5.0'" \
-  -c "Add :CFBundleVersion string '24'" \
+  -c "Add :CFBundleShortVersionString string '0.6.0'" \
+  -c "Add :CFBundleVersion string '25'" \
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \

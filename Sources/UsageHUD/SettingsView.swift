@@ -109,6 +109,14 @@ struct SettingsView: View {
                 }
 
                 HStack {
+                    SettingLabel(title: "ALWAYS ON TOP", detail: "Keep the HUD above other app windows")
+                    Spacer()
+                    InstrumentToggle(isOn: settings.alwaysOnTop, tint: SettingsPalette.codex) {
+                        settings.setAlwaysOnTop(!settings.alwaysOnTop)
+                    }
+                }
+
+                HStack {
                     SettingLabel(title: "MENU BAR USAGE", detail: "Show C72 · A39 beside the gauge")
                     Spacer()
                     InstrumentToggle(isOn: settings.showMenuBarUsage, tint: SettingsPalette.codex) {

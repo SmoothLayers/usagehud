@@ -27,6 +27,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var alertThresholds: [String: Int]
     @Published private(set) var lockHUD: Bool
     @Published private(set) var clickThrough: Bool
+    @Published private(set) var alwaysOnTop: Bool
     @Published private(set) var automaticUpdateChecks: Bool
     @Published private(set) var textScale: Double
     @Published private(set) var barThickness: Double
@@ -48,6 +49,7 @@ final class AppSettings: ObservableObject {
         static let showRefreshCountdown = "showRefreshCountdown"
         static let lockHUD = "lockHUD"
         static let clickThrough = "clickThrough"
+        static let alwaysOnTop = "alwaysOnTop"
         static let automaticUpdateChecks = "automaticUpdateChecks"
         static let textScale = "textScale"
         static let barThickness = "barThickness"
@@ -93,6 +95,9 @@ final class AppSettings: ObservableObject {
         alertThresholds = thresholds
         lockHUD = defaults.bool(forKey: Key.lockHUD)
         clickThrough = defaults.bool(forKey: Key.clickThrough)
+        alwaysOnTop = defaults.object(forKey: Key.alwaysOnTop) == nil
+            ? true
+            : defaults.bool(forKey: Key.alwaysOnTop)
         automaticUpdateChecks = defaults.object(forKey: Key.automaticUpdateChecks) == nil
             ? true
             : defaults.bool(forKey: Key.automaticUpdateChecks)
@@ -194,6 +199,13 @@ final class AppSettings: ObservableObject {
         guard clickThrough != enabled else { return }
         clickThrough = enabled
         defaults.set(enabled, forKey: Key.clickThrough)
+        changed?(.interaction)
+    }
+
+    func setAlwaysOnTop(_ enabled: Bool) {
+        guard alwaysOnTop != enabled else { return }
+        alwaysOnTop = enabled
+        defaults.set(enabled, forKey: Key.alwaysOnTop)
         changed?(.interaction)
     }
 

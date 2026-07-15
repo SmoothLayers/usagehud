@@ -61,6 +61,8 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertFalse(WindowInteraction.styleMask(locked: false).contains(.titled))
         XCTAssertTrue(WindowInteraction.styleMask(locked: false).contains(.resizable))
         XCTAssertFalse(WindowInteraction.styleMask(locked: true).contains(.resizable))
+        XCTAssertEqual(WindowInteraction.level(alwaysOnTop: true), .statusBar)
+        XCTAssertEqual(WindowInteraction.level(alwaysOnTop: false), .normal)
     }
 
     func testAppSettingsPersistAndRestoreSupportedValues() throws {
@@ -78,6 +80,7 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertTrue(settings.showRefreshCountdown)
         XCTAssertFalse(settings.lockHUD)
         XCTAssertFalse(settings.clickThrough)
+        XCTAssertTrue(settings.alwaysOnTop)
         XCTAssertTrue(settings.automaticUpdateChecks)
         XCTAssertEqual(settings.textScale, 1)
         XCTAssertEqual(settings.barThickness, 4)
@@ -95,6 +98,7 @@ final class UsageHUDTests: XCTestCase {
         settings.setAlertThreshold(0, provider: .claude, slot: .secondary)
         settings.setLockHUD(true)
         settings.setClickThrough(true)
+        settings.setAlwaysOnTop(false)
         settings.setAutomaticUpdateChecks(false)
         settings.setTextScale(1.15)
         settings.setBarThickness(8)
@@ -114,6 +118,7 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(restored.alertThreshold(provider: .claude, slot: .secondary), 0)
         XCTAssertTrue(restored.lockHUD)
         XCTAssertTrue(restored.clickThrough)
+        XCTAssertFalse(restored.alwaysOnTop)
         XCTAssertFalse(restored.automaticUpdateChecks)
         XCTAssertEqual(restored.textScale, 1.15)
         XCTAssertEqual(restored.barThickness, 8)
