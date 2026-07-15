@@ -6,6 +6,28 @@ enum PollingSchedule {
     static let claudeInterval: TimeInterval = AppSettings.defaultPollingInterval
 }
 
+enum ClaudePolling {
+    // api.anthropic.com/api/oauth/usage is an internal endpoint that rate
+    // limits frequent pollers with long Retry-After cooldowns, so Claude never
+    // polls faster than this regardless of the interval chosen in Settings.
+    static let minimumInterval: TimeInterval = 5 * 60
+    // Jitter is upward-only: a poll may fire late but never early, so a
+    // server-mandated cooldown can never be cut short.
+    static let jitterFraction = 0.1
+
+    static func interval(from userInterval: TimeInterval) -> TimeInterval {
+        max(userInterval, minimumInterval)
+    }
+
+    static func jittered(
+        _ delay: TimeInterval,
+        random: (ClosedRange<Double>) -> Double = { .random(in: $0) }
+    ) -> TimeInterval {
+        guard delay > 0 else { return delay }
+        return delay + random(0...(delay * jitterFraction))
+    }
+}
+
 enum ClaudeBackoff {
     static let fallbackIntervals: [TimeInterval] = [5 * 60, 10 * 60, 20 * 60, 30 * 60]
 
@@ -128,7 +150,7 @@ final class UsageStore: ObservableObject {
         guard codexTimer != nil || claudeTimer != nil || codexLastSuccess != nil || claudeLastSuccess != nil else { return }
         if settings.showCodex { scheduleCodexTimer() }
         if settings.showClaude, claudeRateLimitedUntil == nil, !claudeIsRefreshing {
-            scheduleClaudeTimer(after: settings.pollingInterval, trigger: "timer", source: "settings")
+            scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "settings")
         }
         AppLog.info("scheduler", "Polling interval changed interval=\(Int(settings.pollingInterval))s")
     }
@@ -268,7 +290,7 @@ final class UsageStore: ObservableObject {
             claudeBackoffAttempt = 0
             claudeRateLimitedUntil = nil
             ClaudeCooldownPersistence.clear(from: defaults)
-            scheduleClaudeTimer(after: settings.pollingInterval, trigger: "timer", source: "normal")
+            scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "normal")
 
         case let .failure(error):
             if case let UsageError.rateLimited(retryAfter) = error {
@@ -292,12 +314,12 @@ final class UsageStore: ObservableObject {
                 ClaudeCooldownPersistence.clear(from: defaults)
                 AppLog.error("scheduler", "Claude refresh failed; retaining last result: \(error.localizedDescription)")
                 claudeNotice = "Update failed · showing last result"
-                scheduleClaudeTimer(after: settings.pollingInterval, trigger: "timer", source: "error-retry")
+                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "error-retry")
             } else {
                 ClaudeCooldownPersistence.clear(from: defaults)
                 AppLog.error("scheduler", "Claude refresh failed: \(error.localizedDescription)")
                 claude = .failed(error.localizedDescription)
-                scheduleClaudeTimer(after: settings.pollingInterval, trigger: "timer", source: "error-retry")
+                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.pollingInterval), trigger: "timer", source: "error-retry")
             }
         }
         usageDisplayChanged?()
@@ -310,7 +332,7 @@ final class UsageStore: ObservableObject {
             claudeNextRefresh = nil
             return
         }
-        let delay = max(1, interval)
+        let delay = ClaudePolling.jittered(max(1, interval))
         let fireAt = Date.now.addingTimeInterval(delay)
         claudeNextRefresh = fireAt
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in

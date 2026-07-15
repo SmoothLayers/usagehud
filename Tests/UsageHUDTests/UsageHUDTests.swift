@@ -316,6 +316,20 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(PollingSchedule.claudeInterval, 120)
     }
 
+    func testClaudePollingEnforcesFiveMinuteFloorAndUpwardJitter() {
+        XCTAssertEqual(ClaudePolling.interval(from: 120), 300)
+        XCTAssertEqual(ClaudePolling.interval(from: 300), 300)
+        XCTAssertEqual(ClaudePolling.interval(from: 900), 900)
+
+        XCTAssertEqual(ClaudePolling.jittered(300, random: { $0.lowerBound }), 300)
+        XCTAssertEqual(ClaudePolling.jittered(300, random: { $0.upperBound }), 330)
+        XCTAssertEqual(ClaudePolling.jittered(0, random: { $0.upperBound }), 0)
+
+        let jittered = ClaudePolling.jittered(600)
+        XCTAssertGreaterThanOrEqual(jittered, 600)
+        XCTAssertLessThanOrEqual(jittered, 660)
+    }
+
     func testZeroRetryAfterUsesFiveMinuteFallback() {
         let zero = ClaudeBackoff.decision(retryAfter: 0, attempt: 0)
         XCTAssertEqual(zero.delay, 300)

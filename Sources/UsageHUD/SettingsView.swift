@@ -66,7 +66,7 @@ struct SettingsView: View {
     }
 
     private var refreshSection: some View {
-        InstrumentSection(title: "REFRESH CADENCE", detail: "Each visible provider uses its own timer") {
+        InstrumentSection(title: "REFRESH CADENCE", detail: "Each visible provider uses its own timer · Claude polls at most every 5 min to avoid rate limits") {
             HStack(spacing: 8) {
                 ForEach(AppSettings.pollingChoices, id: \.self) { interval in
                     let selected = settings.pollingInterval == interval
