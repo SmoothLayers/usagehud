@@ -11,6 +11,7 @@ at a glance, without leaving your editor or asking the CLI.
 [![Downloads](https://img.shields.io/github/downloads/SmoothLayers/usagehud/total?color=63C5FF)](https://github.com/SmoothLayers/usagehud/releases)
 ![Platform](https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-F59363)
 ![Made with Swift](https://img.shields.io/badge/Swift-6-FA7343?logo=swift&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-A78BFA)](LICENSE)
 
 <img src="artifacts/usage-hud-no-shadow-preview.png" alt="Usage HUD showing Codex and Claude remaining usage side by side" width="760">
 
@@ -104,3 +105,7 @@ Run the tests with `swift test`.
 | "Sign in" message | Run `codex login` or `claude auth login`, then **Refresh Now** from the menu bar |
 | Claude login expired | Open Claude Code once and complete its login flow |
 | Unexpected refresh behavior | *Settings → Maintenance → Open Logs* shows every refresh, HTTP status, `Retry-After` value, and backoff decision |
+
+## License
+
+[MIT](LICENSE)
