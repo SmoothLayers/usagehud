@@ -6,7 +6,7 @@ on:
       version:
         description: Release version without the v prefix
         required: true
-        default: 0.4.0
+        default: 0.5.0
 
 permissions:
   contents: read
@@ -27,9 +27,29 @@ jobs:
       - name: Create release archive
         run: ditto -c -k --sequesterRsrc --keepParent "dist/Usage HUD.app" "Usage-HUD-v${{ inputs.version }}-macOS.zip"
 
+      - name: Generate signed Sparkle appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          SPARKLE_BIN="$(find .build -type d -path '*/Sparkle/bin' -print -quit)"
+          test -x "$SPARKLE_BIN/generate_appcast"
+          mkdir sparkle-updates
+          cp "Usage-HUD-v${{ inputs.version }}-macOS.zip" sparkle-updates/
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle-private-key
+          chmod 600 /tmp/sparkle-private-key
+          "$SPARKLE_BIN/generate_appcast" \
+            --ed-key-file /tmp/sparkle-private-key \
+            --download-url-prefix "https://github.com/SmoothLayers/usagehud/releases/download/v${{ inputs.version }}/" \
+            sparkle-updates
+          rm -f /tmp/sparkle-private-key
+          cp sparkle-updates/appcast.xml appcast.xml
+
       - name: Upload release archive
         uses: actions/upload-artifact@v4
         with:
           name: Usage-HUD-v${{ inputs.version }}-macOS
-          path: Usage-HUD-v${{ inputs.version }}-macOS.zip
+          path: |
+            Usage-HUD-v${{ inputs.version }}-macOS.zip
+            appcast.xml
           if-no-files-found: error

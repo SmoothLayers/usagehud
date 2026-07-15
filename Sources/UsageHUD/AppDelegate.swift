@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import Sparkle
 import SwiftUI
 
 enum WindowPlacement {
@@ -131,11 +132,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lockHUDItem: NSMenuItem!
     private var clickThroughItem: NSMenuItem!
     private var updateItem: NSMenuItem!
-    private var updateTimer: Timer?
     private var isApplyingProgrammaticResize = false
-    private let lastUpdateCheckKey = "lastAutomaticUpdateCheck"
     private let notificationService = UsageNotificationService()
-    private let updateChecker = UpdateChecker()
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: false,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
     private let setupCompletedKey = "firstRunSetupCompleted"
 
     override init() {
@@ -153,9 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         createPanel()
         createStatusItem()
         applyInteractionSettings()
-        updateChecker.statusChanged = { [weak self] status in
-            self?.updateUpdateMenu(for: status)
-        }
+        updaterController.startUpdater()
+        applyUpdateSettings()
         store.compactChanged = { [weak self] compact in
             self?.resizePanel(compact: compact)
             self?.compactModeItem.state = compact ? .on : .off
@@ -184,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .interaction:
                 self.applyInteractionSettings()
             case .updates:
-                self.configureUpdateChecks()
+                self.applyUpdateSettings()
             case .layout:
                 self.resizePanel(compact: self.store.isCompact)
             case .sizing:
@@ -193,7 +195,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.resizePanel(compact: self.store.isCompact)
             }
         }
-        configureUpdateChecks()
         if UserDefaults.standard.bool(forKey: setupCompletedKey) {
             store.start()
             panel.orderFrontRegardless()
@@ -315,34 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough)")
     }
 
-    private func configureUpdateChecks() {
-        updateTimer?.invalidate()
-        updateTimer = nil
-        guard settings.automaticUpdateChecks else { return }
-        let lastCheck = UserDefaults.standard.object(forKey: lastUpdateCheckKey) as? Date
-        if UpdateCheckSchedule.shouldRun(lastCheck: lastCheck) {
-            runUpdateCheck()
-        }
-        let timer = Timer(timeInterval: UpdateCheckSchedule.interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.runUpdateCheck() }
-        }
-        updateTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
-    }
-
-    private func updateUpdateMenu(for status: UpdateStatus) {
-        guard updateItem != nil else { return }
-        switch status {
-        case .checking:
-            updateItem.title = "Checking for Updates…"
-            updateItem.isEnabled = false
-        case let .available(release):
-            updateItem.title = "Update Available — v\(release.version)…"
-            updateItem.isEnabled = true
-        default:
-            updateItem.title = "Check for Updates…"
-            updateItem.isEnabled = true
-        }
+    private func applyUpdateSettings() {
+        updaterController.updater.automaticallyChecksForUpdates = settings.automaticUpdateChecks
+        updaterController.updater.automaticallyDownloadsUpdates = settings.automaticUpdateChecks
+        AppLog.info("updates", "Sparkle automatic updates enabled=\(settings.automaticUpdateChecks)")
     }
 
     private func resizePanel(compact: Bool) {
@@ -472,18 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func checkForUpdates() {
-        if case let .available(release) = updateChecker.status {
-            NSWorkspace.shared.open(release.url)
-            return
-        }
-        runUpdateCheck()
-    }
-
-    private func runUpdateCheck() {
-        Task {
-            await updateChecker.check()
-            UserDefaults.standard.set(Date.now, forKey: lastUpdateCheckKey)
-        }
+        updaterController.checkForUpdates(nil)
     }
 
     private func requestUsageAlerts(_ enabled: Bool) {
@@ -518,7 +484,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let view = SettingsView(
                 settings: settings,
                 store: store,
-                updateChecker: updateChecker,
                 setUsageAlerts: { [weak self] enabled in
                     self?.requestUsageAlerts(enabled)
                 },

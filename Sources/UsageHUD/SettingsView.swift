@@ -11,7 +11,6 @@ private enum SettingsPalette {
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var store: UsageStore
-    @ObservedObject var updateChecker: UpdateChecker
     let setUsageAlerts: (Bool) -> Void
     let checkForUpdates: () -> Void
     let resetWindowSize: () -> Void
@@ -272,31 +271,22 @@ struct SettingsView: View {
     }
 
     private var updateSection: some View {
-        InstrumentSection(title: "UPDATES", detail: updateChecker.status.displayText) {
+        InstrumentSection(title: "UPDATES", detail: "Secure updates are downloaded and installed automatically") {
             HStack {
-                SettingLabel(title: "AUTOMATIC CHECKS", detail: "Checks GitHub Releases once per day")
+                SettingLabel(title: "AUTOMATIC UPDATES", detail: "Checks daily and installs in the background")
                 Spacer()
                 InstrumentToggle(isOn: settings.automaticUpdateChecks, tint: SettingsPalette.codex) {
                     settings.setAutomaticUpdateChecks(!settings.automaticUpdateChecks)
                 }
                 Button(action: checkForUpdates) {
-                    Text(updateButtonTitle)
+                    Text("CHECK NOW")
                         .font(.system(size: 8, weight: .black, design: .monospaced))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
                 }
                 .buttonStyle(.plain)
-                .disabled(updateChecker.status == .checking)
             }
-        }
-    }
-
-    private var updateButtonTitle: String {
-        switch updateChecker.status {
-        case .checking: return "CHECKING"
-        case .available: return "OPEN RELEASE"
-        default: return "CHECK NOW"
         }
     }
 

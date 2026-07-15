@@ -17,6 +17,13 @@ rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$ROOT/.build/release/UsageHUD" "$CONTENTS/MacOS/UsageHUD"
 cp "$ROOT/assets/UsageHUD.icns" "$CONTENTS/Resources/UsageHUD.icns"
+SPARKLE_FRAMEWORK="$(find "$ROOT/.build" -type d -name Sparkle.framework -print -quit)"
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+  echo "Sparkle.framework was not found in the SwiftPM build artifacts" >&2
+  exit 1
+fi
+mkdir -p "$CONTENTS/Frameworks"
+ditto "$SPARKLE_FRAMEWORK" "$CONTENTS/Frameworks/Sparkle.framework"
 
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string '$APP_NAME'" \
   -c "Add :CFBundleDisplayName string '$APP_NAME'" \
@@ -26,11 +33,18 @@ cp "$ROOT/assets/UsageHUD.icns" "$CONTENTS/Resources/UsageHUD.icns"
   -c "Add :CFBundleExecutable string 'UsageHUD'" \
   -c "Add :CFBundleIconFile string 'UsageHUD.icns'" \
   -c "Add :CFBundlePackageType string 'APPL'" \
-  -c "Add :CFBundleShortVersionString string '0.4.0'" \
-  -c "Add :CFBundleVersion string '23'" \
+  -c "Add :CFBundleShortVersionString string '0.5.0'" \
+  -c "Add :CFBundleVersion string '24'" \
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \
+  -c "Add :SUFeedURL string 'https://github.com/SmoothLayers/usagehud/releases/latest/download/appcast.xml'" \
+  -c "Add :SUPublicEDKey string 'Ks6jdtpKWGNa0/XBqvvBwDoiUiD20kDHBVAfrJSOpdg='" \
+  -c "Add :SUEnableAutomaticChecks bool true" \
+  -c "Add :SUAutomaticallyUpdate bool true" \
+  -c "Add :SUAllowsAutomaticUpdates bool true" \
+  -c "Add :SUScheduledCheckInterval integer 86400" \
+  -c "Add :SUVerifyUpdateBeforeExtraction bool true" \
   "$CONTENTS/Info.plist"
 
 codesign --force --deep --sign - "$APP_DIR"

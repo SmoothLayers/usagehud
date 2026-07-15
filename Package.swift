@@ -7,8 +7,19 @@ let package = Package(
     products: [
         .executable(name: "UsageHUD", targets: ["UsageHUD"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
+    ],
     targets: [
-        .executableTarget(name: "UsageHUD"),
+        .executableTarget(
+            name: "UsageHUD",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
+        ),
         .testTarget(name: "UsageHUDTests", dependencies: ["UsageHUD"]),
     ],
     swiftLanguageModes: [.v5]
