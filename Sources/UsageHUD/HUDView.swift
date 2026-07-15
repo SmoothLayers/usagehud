@@ -165,8 +165,11 @@ struct HUDView: View {
     }
 
     private var statusColor: Color {
-        if store.codex.usage != nil || store.claude.usage != nil { return Color(hudHex: settings.codexAccentHex) }
-        return Color(hudHex: settings.claudeAccentHex)
+        if settings.showCodex, store.codex.usage != nil { return Color(hudHex: settings.codexAccentHex) }
+        if settings.showClaude, store.claude.usage != nil { return Color(hudHex: settings.claudeAccentHex) }
+        return settings.showCodex
+            ? Color(hudHex: settings.codexAccentHex)
+            : Color(hudHex: settings.claudeAccentHex)
     }
 }
 

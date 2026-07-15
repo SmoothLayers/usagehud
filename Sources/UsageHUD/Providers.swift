@@ -5,8 +5,24 @@ protocol UsageProviding {
 }
 
 enum ExecutableLocator {
+    private static let cacheLock = NSLock()
+    private static var cache: [String: String] = [:]
+
     static func find(_ name: String) -> String? {
         let fm = FileManager.default
+        cacheLock.lock()
+        let cached = cache[name]
+        cacheLock.unlock()
+        if let cached, fm.isExecutableFile(atPath: cached) { return cached }
+
+        guard let resolved = resolve(name, fm: fm) else { return nil }
+        cacheLock.lock()
+        cache[name] = resolved
+        cacheLock.unlock()
+        return resolved
+    }
+
+    private static func resolve(_ name: String, fm: FileManager) -> String? {
         let home = fm.homeDirectoryForCurrentUser.path
         let fixedCandidates = [
             "/opt/homebrew/bin/\(name)",
@@ -26,9 +42,12 @@ enum ExecutableLocator {
             }
         }
 
+        // Ask the user's own login shell so PATH additions in bash or fish
+        // configs are honored, not just zsh's.
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let process = Process()
         let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-lc", "command -v \(name)"]
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

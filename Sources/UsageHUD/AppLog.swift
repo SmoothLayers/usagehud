@@ -1,8 +1,10 @@
 import Foundation
 
 enum AppMetadata {
+    // Real builds read the version stamped into Info.plist by build-app.sh.
+    // The fallback only appears when running outside a bundle (swift test/run).
     static var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     }
 }
 
@@ -104,8 +106,6 @@ final class AppLogger: @unchecked Sendable {
 }
 
 enum AppLog {
-    private static let freshStartVersion = "0.1.13"
-    private static let freshStartDefaultsKey = "logsClearedForVersion.0.1.13"
     private static let logger = AppLogger(
         directory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Usage HUD", isDirectory: true)
@@ -115,12 +115,6 @@ enum AppLog {
 
     @discardableResult
     static func prepare() -> Bool { logger.prepare() }
-    static func clearForFreshStartIfNeeded(defaults: UserDefaults = .standard) {
-        guard AppMetadata.version == freshStartVersion, !defaults.bool(forKey: freshStartDefaultsKey) else { return }
-        if logger.clear() {
-            defaults.set(true, forKey: freshStartDefaultsKey)
-        }
-    }
     static func flush() { logger.flush() }
     static func info(_ category: String, _ message: String) { logger.log(.info, category: category, message) }
     static func warning(_ category: String, _ message: String) { logger.log(.warning, category: category, message) }

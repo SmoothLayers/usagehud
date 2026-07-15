@@ -70,23 +70,6 @@ enum UsageFormatting {
         return leftoverMinutes == 0 ? "\(hours)h" : "\(hours)h \(leftoverMinutes)m"
     }
 
-    static func resetText(for date: Date?, now: Date = .now) -> String {
-        guard let date else { return "Reset time unavailable" }
-        let remaining = date.timeIntervalSince(now)
-        if remaining <= 0 { return "Resetting now" }
-
-        let minutes = Int(remaining / 60)
-        if minutes < 60 { return "Resets in \(max(1, minutes))m" }
-
-        let hours = minutes / 60
-        let leftoverMinutes = minutes % 60
-        if hours < 24 { return leftoverMinutes == 0 ? "Resets in \(hours)h" : "Resets in \(hours)h \(leftoverMinutes)m" }
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE h:mm a"
-        return "Resets \(formatter.string(from: date))"
-    }
-
     static func resetCountdownText(for date: Date?, now: Date = .now) -> String {
         "RESET \(resetCountdownValueText(for: date, now: now))"
     }

@@ -159,7 +159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppLog.clearForFreshStartIfNeeded()
         AppLog.prepare()
         AppLog.info("app", "Usage HUD v\(AppMetadata.version) started")
         NSApp.setActivationPolicy(.accessory)
@@ -322,7 +321,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.ignoresMouseEvents = settings.clickThrough
         panel.level = WindowInteraction.level(alwaysOnTop: settings.alwaysOnTop)
         panel.collectionBehavior = WindowInteraction.collectionBehavior(alwaysOnTop: settings.alwaysOnTop)
-        panel.styleMask = WindowInteraction.styleMask(locked: settings.lockHUD)
+        // Reassigning an identical styleMask still churns the server-side
+        // window and can reorder it, so only touch it on a real change.
+        let styleMask = WindowInteraction.styleMask(locked: settings.lockHUD)
+        if panel.styleMask != styleMask {
+            panel.styleMask = styleMask
+        }
         lockHUDItem?.state = settings.lockHUD ? .on : .off
         clickThroughItem?.state = settings.clickThrough ? .on : .off
         alwaysOnTopItem?.state = settings.alwaysOnTop ? .on : .off
@@ -430,6 +434,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowDidChangeScreen(_ notification: Notification) {
         configurePanelSizeLimits(compact: store.isCompact)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Activating the app (opening Settings, the setup assistant, or a
+        // permission alert) raises every window it owns, including the HUD
+        // panel. Because the app is a non-activating accessory, nothing later
+        // pushes the panel back down, so it would linger above other apps'
+        // windows. Sink it again whenever Always on Top is off.
+        guard panel != nil, panel.isVisible, !settings.alwaysOnTop else { return }
+        panel.orderBack(nil)
+        AppLog.info("window", "Panel sunk after app activation alwaysOnTop=false")
     }
 
     @objc private func showHUD() {

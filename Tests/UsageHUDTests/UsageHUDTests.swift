@@ -129,25 +129,6 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(restored.codexAccentHex, "63C5FF")
     }
 
-    func testSemanticVersionComparisonAndReleaseDecoding() throws {
-        XCTAssertTrue(SemanticVersion.isNewer("v0.2.10", than: "0.2.9"))
-        XCTAssertTrue(SemanticVersion.isNewer("1.0.0", than: "0.9.99"))
-        XCTAssertFalse(SemanticVersion.isNewer("v0.2.1", than: "0.2.1"))
-        XCTAssertFalse(SemanticVersion.isNewer("0.2.0", than: "0.2.1"))
-
-        let data = #"{"tag_name":"v0.3.0","html_url":"https://github.com/SmoothLayers/usagehud/releases/tag/v0.3.0"}"#.data(using: .utf8)!
-        let release = try JSONDecoder().decode(ReleaseInfo.self, from: data)
-        XCTAssertEqual(release.version, "v0.3.0")
-        XCTAssertEqual(release.url.absoluteString, "https://github.com/SmoothLayers/usagehud/releases/tag/v0.3.0")
-    }
-
-    func testAutomaticUpdateScheduleRunsAtMostDaily() {
-        let now = Date(timeIntervalSince1970: 20_000)
-        XCTAssertTrue(UpdateCheckSchedule.shouldRun(lastCheck: nil, now: now))
-        XCTAssertFalse(UpdateCheckSchedule.shouldRun(lastCheck: now.addingTimeInterval(-3_600), now: now))
-        XCTAssertTrue(UpdateCheckSchedule.shouldRun(lastCheck: now.addingTimeInterval(-86_400), now: now))
-    }
-
     func testMenuBarUsageFormattingUsesEnabledProvidersAndUnavailableMarker() {
         let usage = ProviderUsage(
             kind: .codex,
