@@ -392,7 +392,9 @@ final class UsageHUDTests: XCTestCase {
     }
 
     func testNVMExecutableCanFindSiblingNodeWithAugmentedPath() throws {
-        let codex = try XCTUnwrap(ExecutableLocator.find("codex"))
+        guard let codex = ExecutableLocator.find("codex") else {
+            throw XCTSkip("Codex is not installed on this test host")
+        }
         let directory = URL(fileURLWithPath: codex).deletingLastPathComponent().path
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: "\(directory)/node"))
     }
