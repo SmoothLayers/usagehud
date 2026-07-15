@@ -41,14 +41,25 @@ echo "Writing Info.plist"
   -c "Add :LSMinimumSystemVersion string '14.0'" \
   -c "Add :LSUIElement bool true" \
   -c "Add :NSHighResolutionCapable bool true" \
-  -c "Add :SUFeedURL string 'https://github.com/SmoothLayers/usagehud/releases/latest/download/appcast.xml'" \
-  -c "Add :SUPublicEDKey string 'Ks6jdtpKWGNa0/XBqvvBwDoiUiD20kDHBVAfrJSOpdg='" \
-  -c "Add :SUEnableAutomaticChecks bool true" \
-  -c "Add :SUAutomaticallyUpdate bool true" \
-  -c "Add :SUAllowsAutomaticUpdates bool true" \
-  -c "Add :SUScheduledCheckInterval integer 86400" \
-  -c "Add :SUVerifyUpdateBeforeExtraction bool true" \
   "$CONTENTS/Info.plist"
+
+sparkle_plist_values=(
+  "SUFeedURL:string:https://github.com/SmoothLayers/usagehud/releases/latest/download/appcast.xml"
+  "SUPublicEDKey:string:Ks6jdtpKWGNa0/XBqvvBwDoiUiD20kDHBVAfrJSOpdg="
+  "SUEnableAutomaticChecks:bool:true"
+  "SUAutomaticallyUpdate:bool:true"
+  "SUAllowsAutomaticUpdates:bool:true"
+  "SUScheduledCheckInterval:integer:86400"
+  "SUVerifyUpdateBeforeExtraction:bool:true"
+)
+for entry in "${sparkle_plist_values[@]}"; do
+  key="${entry%%:*}"
+  remainder="${entry#*:}"
+  type="${remainder%%:*}"
+  value="${remainder#*:}"
+  echo "Writing Sparkle key $key"
+  /usr/libexec/PlistBuddy -c "Add :$key $type $value" "$CONTENTS/Info.plist"
+done
 
 echo "Signing app bundle"
 codesign --force --deep --sign - "$APP_DIR"
