@@ -11,6 +11,7 @@ enum AppSettingsChange {
     case layout
     case sizing
     case timers
+    case claudeLiveUsage
 }
 
 final class AppSettings: ObservableObject {
@@ -38,6 +39,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var compactLayout: CompactLayout
     @Published private(set) var codexAccentHex: String
     @Published private(set) var claudeAccentHex: String
+    @Published private(set) var claudeLiveUsageEnabled: Bool
 
     var changed: ((AppSettingsChange) -> Void)?
 
@@ -62,6 +64,7 @@ final class AppSettings: ObservableObject {
         static let compactLayout = "compactLayout"
         static let codexAccentHex = "codexAccentHex"
         static let claudeAccentHex = "claudeAccentHex"
+        static let claudeLiveUsageEnabled = "claudeLiveUsageEnabled"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -126,6 +129,7 @@ final class AppSettings: ObservableObject {
         codexAccentHex = HUDAccentPalette.choices.contains(savedCodexAccent) ? savedCodexAccent : HUDAccentPalette.codexDefault
         let savedClaudeAccent = defaults.string(forKey: Key.claudeAccentHex) ?? HUDAccentPalette.claudeDefault
         claudeAccentHex = HUDAccentPalette.choices.contains(savedClaudeAccent) ? savedClaudeAccent : HUDAccentPalette.claudeDefault
+        claudeLiveUsageEnabled = defaults.bool(forKey: Key.claudeLiveUsageEnabled)
     }
 
     var visibleProviderCount: Int {
@@ -199,6 +203,13 @@ final class AppSettings: ObservableObject {
         showRefreshCountdown = enabled
         defaults.set(enabled, forKey: Key.showRefreshCountdown)
         changed?(.timers)
+    }
+
+    func setClaudeLiveUsageEnabled(_ enabled: Bool) {
+        guard claudeLiveUsageEnabled != enabled else { return }
+        claudeLiveUsageEnabled = enabled
+        defaults.set(enabled, forKey: Key.claudeLiveUsageEnabled)
+        changed?(.claudeLiveUsage)
     }
 
     static let allowedAlertThresholds = [0, 5, 10, 15, 20, 25, 30]

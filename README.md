@@ -50,18 +50,26 @@ layout, and optionally enables notifications. Requires **macOS 14+** on **Apple 
 | Provider | Source |
 |----------|--------|
 | **Codex** | Your installed `codex` CLI's `app-server` interface (`account/rateLimits/read`) |
-| **Claude** | Your existing Claude Code sign-in from the macOS Keychain, sent only to Anthropic's own usage endpoint |
+| **Claude** | Your existing Claude Code sign-in from its scoped Keychain item, legacy Keychain item, or credentials file, sent only to Anthropic's own usage endpoint |
 
 **Privacy:** credentials never leave your Mac except inside each provider's own authenticated
 request. Usage HUD does not store or log tokens. Diagnostic logs stay local
 (`~/Library/Application Support/Usage HUD/usage-hud.log`, rotated at 1 MB, never containing
 credentials or response bodies) and can be opened from *Settings → Maintenance*.
 
-**Polling:** each provider refreshes independently every 2 minutes by default (2/5/10/15 min
-selectable), so one provider can never delay the other. Hidden providers aren't polled at all.
+**Polling:** each provider refreshes independently (Codex every 2 minutes and Claude every 5
+minutes by default), so one provider can never delay the other. Hidden providers aren't polled.
 If Claude rate-limits the usage endpoint, the HUD honors the `Retry-After` header (with a
 conservative fallback backoff), keeps the last good reading visible with a **STALE** marker, and
-remembers the cooldown across restarts.
+remembers the cooldown across restarts. Ordinary failed readings expire after 30 minutes; a
+rate-limited reading can remain visible for up to 24 hours while the required cooldown is active.
+When menu bar percentages are enabled, a trailing `!` marks retained stale Claude data.
+
+For fresher Claude data without extra usage-endpoint requests, Settings offers an opt-in **Live
+Claude Updates** feed. It installs a silent local Claude Code status-line command, accepts only
+token-protected loopback requests, and extracts only the `rate_limits` windows. If `ccstatusline`
+is already configured, Usage HUD chains it and preserves its visible output; other custom status
+lines are left untouched. Turning the option off restores the original `ccstatusline` entry.
 
 ## Everyday use
 

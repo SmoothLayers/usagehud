@@ -215,6 +215,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         userDriverDelegate: nil
     )
     private let setupCompletedKey = "firstRunSetupCompleted"
+    private let claudeStatusLineInstaller = ClaudeStatusLineInstaller()
+    private var claudeLiveUsageServer: ClaudeLiveUsageServer?
 
     override init() {
         let settings = AppSettings()
@@ -246,6 +248,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self,
             selector: #selector(workspaceOrderingChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
+        workspaceCenter.addObserver(
+            self,
+            selector: #selector(workspaceDidWake),
+            name: NSWorkspace.didWakeNotification,
             object: nil
         )
         // App and Space switches are not enough: clicking the panel raises
@@ -308,8 +316,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.resizePanel(compact: self.store.isCompact)
             case .timers:
                 self.resizePanel(compact: self.store.isCompact)
+            case .claudeLiveUsage:
+                self.applyClaudeLiveUsageSetting()
             }
         }
+        applyClaudeLiveUsageSetting()
         if UserDefaults.standard.bool(forKey: setupCompletedKey) {
             store.start()
             showPanel()
@@ -411,7 +422,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 codex: store.codex,
                 claude: store.claude,
                 showCodex: settings.showCodex,
-                showClaude: settings.showClaude
+                showClaude: settings.showClaude,
+                claudeStale: store.claudeIsStale
             )
             statusItem.button?.imagePosition = .imageLeading
         } else {
@@ -549,6 +561,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // permission alert) raises every window it owns, including the HUD
         // panel. Sink it again whenever Always on Top is off.
         updatePanelOrdering(reason: "app-activated")
+        store.refreshStaleProviders(trigger: "app-activated")
+    }
+
+    @objc private func workspaceDidWake(_ notification: Notification) {
+        AppLog.info("scheduler", "System wake detected; checking provider freshness")
+        store.refreshStaleProviders(trigger: "system-wake")
+    }
+
+    private func applyClaudeLiveUsageSetting() {
+        if settings.claudeLiveUsageEnabled {
+            do {
+                let result = try claudeStatusLineInstaller.install()
+                store.setClaudeLiveStatus(result.detail)
+                switch result {
+                case .installed, .alreadyInstalled, .chainedCCStatusLine:
+                    if claudeLiveUsageServer == nil {
+                        let server = ClaudeLiveUsageServer(endpointURL: claudeStatusLineInstaller.endpointURL)
+                        try server.start { [weak self] snapshot in
+                            self?.store.ingestClaudeLive(snapshot)
+                        }
+                        claudeLiveUsageServer = server
+                    }
+                case .userStatusLinePresent, .userOptedOut:
+                    claudeLiveUsageServer?.stop()
+                    claudeLiveUsageServer = nil
+                }
+                AppLog.info("claude-live", result.detail)
+            } catch {
+                claudeLiveUsageServer?.stop()
+                claudeLiveUsageServer = nil
+                let detail = "Live Claude updates unavailable: \(error.localizedDescription)"
+                store.setClaudeLiveStatus(detail)
+                AppLog.error("claude-live", detail)
+            }
+        } else {
+            claudeLiveUsageServer?.stop()
+            claudeLiveUsageServer = nil
+            do {
+                try claudeStatusLineInstaller.uninstall()
+                store.setClaudeLiveStatus(nil)
+            } catch {
+                let detail = "Could not remove managed Claude status line: \(error.localizedDescription)"
+                store.setClaudeLiveStatus(detail)
+                AppLog.error("claude-live", detail)
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        claudeLiveUsageServer?.stop()
     }
 
     @objc private func workspaceOrderingChanged(_ notification: Notification) {

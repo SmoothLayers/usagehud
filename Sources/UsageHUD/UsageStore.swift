@@ -40,6 +40,23 @@ enum ClaudeBackoff {
     }
 }
 
+enum ClaudeFreshness {
+    static let livePollSuppression: TimeInterval = 5 * 60
+    static let liveDedupeInterval: TimeInterval = 30
+    static let ordinaryCacheRetention: TimeInterval = 30 * 60
+    static let rateLimitedCacheRetention: TimeInterval = 24 * 60 * 60
+
+    static func canRetain(_ usage: ProviderUsage, after error: Error, now: Date) -> Bool {
+        let retention: TimeInterval
+        if case UsageError.rateLimited = error {
+            retention = rateLimitedCacheRetention
+        } else {
+            retention = ordinaryCacheRetention
+        }
+        return now.timeIntervalSince(usage.fetchedAt) <= retention
+    }
+}
+
 struct PersistedClaudeCooldown: Equatable {
     let retryAt: Date
     let backoffAttempt: Int
@@ -78,6 +95,9 @@ final class UsageStore: ObservableObject {
     @Published var lastRefresh: Date?
     @Published var isRefreshing = false
     @Published var claudeNotice: String?
+    @Published var claudeIsStale = false
+    @Published var claudeLastAttempt: Date?
+    @Published var claudeLiveStatus: String?
     @Published var codexLastSuccess: Date?
     @Published var claudeLastSuccess: Date?
     @Published var codexNextRefresh: Date?
@@ -95,8 +115,10 @@ final class UsageStore: ObservableObject {
     private var claudeRefreshTask: Task<Void, Never>?
     private var codexTimer: Timer?
     private var claudeTimer: Timer?
+    private var claudeLiveFreshnessTimer: Timer?
     private var codexIsRefreshing = false
     private var claudeIsRefreshing = false
+    private var hasStarted = false
     private var claudeRateLimitedUntil: Date?
     private var claudeBackoffAttempt = 0
 
@@ -113,6 +135,8 @@ final class UsageStore: ObservableObject {
     }
 
     func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
         AppLog.info("scheduler", "Independent polling started codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s")
         if settings.showCodex {
             refreshCodex(trigger: "startup")
@@ -126,6 +150,54 @@ final class UsageStore: ObservableObject {
     func refresh() {
         if settings.showCodex { refreshCodex(trigger: "manual") }
         if settings.showClaude { refreshClaude(trigger: "manual") }
+    }
+
+    func refreshStaleProviders(trigger: String, now: Date = .now) {
+        guard hasStarted else { return }
+        if settings.showCodex,
+           codexLastSuccess == nil || now.timeIntervalSince(codexLastSuccess!) >= settings.codexPollingInterval {
+            refreshCodex(trigger: trigger)
+        }
+        if settings.showClaude,
+           claudeLastSuccess == nil || now.timeIntervalSince(claudeLastSuccess!) >= ClaudePolling.interval(from: settings.claudePollingInterval) {
+            refreshClaude(trigger: trigger)
+        }
+    }
+
+    func setClaudeLiveStatus(_ status: String?) {
+        claudeLiveStatus = status
+    }
+
+    func ingestClaudeLive(_ snapshot: ClaudeLiveUsageSnapshot) {
+        guard settings.showClaude else { return }
+        let previous = claude.usage
+        guard let merged = ClaudeLiveUsageParser.mergedUsage(snapshot: snapshot, previous: previous) else {
+            AppLog.warning("claude-live", "Ignored live update without a 5h window or cached baseline")
+            return
+        }
+        if let previous,
+           previous.source == .liveSession,
+           previous.primary == merged.primary,
+           previous.secondary == merged.secondary,
+           snapshot.receivedAt.timeIntervalSince(previous.fetchedAt) < ClaudeFreshness.liveDedupeInterval {
+            return
+        }
+
+        claude = .loaded(merged)
+        claudeLastSuccess = merged.fetchedAt
+        claudeNotice = nil
+        claudeIsStale = false
+        evaluateAlerts(for: merged)
+        scheduleClaudeLiveFreshnessExpiry(for: merged)
+        if claudeRateLimitedUntil == nil {
+            scheduleClaudeTimer(
+                after: ClaudePolling.interval(from: settings.claudePollingInterval),
+                trigger: "timer",
+                source: "live-session"
+            )
+        }
+        usageDisplayChanged?()
+        AppLog.info("claude-live", "Live usage applied remaining=\(Int(merged.primary.remainingPercent.rounded()))%")
     }
 
     func toggleCompact() {
@@ -176,6 +248,8 @@ final class UsageStore: ObservableObject {
         } else {
             claudeTimer?.invalidate()
             claudeTimer = nil
+            claudeLiveFreshnessTimer?.invalidate()
+            claudeLiveFreshnessTimer = nil
             claudeNextRefresh = nil
         }
         AppLog.info("scheduler", "Provider visibility changed codex=\(settings.showCodex) claude=\(settings.showClaude)")
@@ -256,6 +330,20 @@ final class UsageStore: ObservableObject {
             ClaudeCooldownPersistence.clear(from: defaults)
         }
 
+        if let current = claude.usage,
+           current.source == .liveSession {
+            let age = now.timeIntervalSince(current.fetchedAt)
+            if age >= 0, age < ClaudeFreshness.livePollSuppression {
+                scheduleClaudeTimer(
+                    after: ClaudeFreshness.livePollSuppression - age,
+                    trigger: "timer",
+                    source: "live-fresh"
+                )
+                AppLog.info("scheduler", "Claude refresh skipped trigger=\(trigger) reason=fresh-live-session")
+                return
+            }
+        }
+
         guard !claudeIsRefreshing else {
             AppLog.info("scheduler", "Claude refresh skipped trigger=\(trigger) reason=already-refreshing")
             return
@@ -267,11 +355,12 @@ final class UsageStore: ObservableObject {
         claudeTimer = nil
         claudeNextRefresh = nil
         claudeIsRefreshing = true
+        claudeLastAttempt = now
         updateRefreshingState()
         AppLog.info("scheduler", "Claude refresh started trigger=\(trigger)")
         claudeRefreshTask = Task {
             let result = await Self.result(from: ClaudeUsageProvider())
-            applyClaudeResult(result, now: .now)
+            applyClaudeResult(result, now: .now, attemptStartedAt: now)
             claudeIsRefreshing = false
             claudeRefreshTask = nil
             lastRefresh = .now
@@ -280,13 +369,29 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    private func applyClaudeResult(_ result: Result<ProviderUsage, Error>, now: Date) {
+    private func applyClaudeResult(
+        _ result: Result<ProviderUsage, Error>,
+        now: Date,
+        attemptStartedAt: Date
+    ) {
+        let newerLiveUsage = claude.usage.map {
+            $0.source == .liveSession && $0.fetchedAt > attemptStartedAt
+        } ?? false
         switch result {
         case let .success(usage):
+            if newerLiveUsage {
+                AppLog.info("scheduler", "Claude OAuth result ignored because a newer live update arrived")
+                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "newer-live")
+                usageDisplayChanged?()
+                return
+            }
             claude = .loaded(usage)
+            claudeLiveFreshnessTimer?.invalidate()
+            claudeLiveFreshnessTimer = nil
             claudeLastSuccess = usage.fetchedAt
             evaluateAlerts(for: usage)
             claudeNotice = nil
+            claudeIsStale = false
             claudeBackoffAttempt = 0
             claudeRateLimitedUntil = nil
             ClaudeCooldownPersistence.clear(from: defaults)
@@ -306,23 +411,73 @@ final class UsageStore: ObservableObject {
                     ),
                     to: defaults
                 )
-                claudeNotice = "Rate limited · retry in \(UsageFormatting.durationText(delay))"
+                if !newerLiveUsage {
+                    retainClaudeCacheOrFail(
+                        error: error,
+                        now: now,
+                        notice: "Rate limited · retry in \(UsageFormatting.durationText(delay))"
+                    )
+                }
                 scheduleClaudeTimer(after: delay, trigger: "claude-retry", source: source)
                 AppLog.warning("scheduler", "Claude cooldown scheduled delaySeconds=\(Int(delay.rounded())) source=\(source) attempt=\(claudeBackoffAttempt)")
-                if claude.usage == nil { claude = .failed(error.localizedDescription) }
+            } else if newerLiveUsage {
+                AppLog.error("scheduler", "Claude refresh failed after a newer live update; live result retained: \(error.localizedDescription)")
+                scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "newer-live-error")
             } else if claude.usage != nil {
                 ClaudeCooldownPersistence.clear(from: defaults)
-                AppLog.error("scheduler", "Claude refresh failed; retaining last result: \(error.localizedDescription)")
-                claudeNotice = "Update failed · showing last result"
+                retainClaudeCacheOrFail(
+                    error: error,
+                    now: now,
+                    notice: "Update failed · showing last result"
+                )
                 scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "error-retry")
             } else {
                 ClaudeCooldownPersistence.clear(from: defaults)
                 AppLog.error("scheduler", "Claude refresh failed: \(error.localizedDescription)")
                 claude = .failed(error.localizedDescription)
+                claudeNotice = nil
+                claudeIsStale = false
                 scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "error-retry")
             }
         }
         usageDisplayChanged?()
+    }
+
+    private func retainClaudeCacheOrFail(error: Error, now: Date, notice: String) {
+        if let usage = claude.usage, ClaudeFreshness.canRetain(usage, after: error, now: now) {
+            AppLog.error("scheduler", "Claude refresh failed; retaining bounded cache: \(error.localizedDescription)")
+            claudeNotice = notice
+            claudeIsStale = true
+        } else {
+            AppLog.error("scheduler", "Claude cached result expired: \(error.localizedDescription)")
+            claude = .failed(error.localizedDescription)
+            claudeNotice = nil
+            claudeIsStale = false
+        }
+    }
+
+    private func scheduleClaudeLiveFreshnessExpiry(for usage: ProviderUsage) {
+        claudeLiveFreshnessTimer?.invalidate()
+        let fetchedAt = usage.fetchedAt
+        let delay = max(1, ClaudeFreshness.livePollSuppression - Date.now.timeIntervalSince(fetchedAt))
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard
+                    let self,
+                    let current = self.claude.usage,
+                    current.source == .liveSession,
+                    current.fetchedAt == fetchedAt,
+                    Date.now.timeIntervalSince(current.fetchedAt) >= ClaudeFreshness.livePollSuppression
+                else { return }
+                self.claudeIsStale = true
+                if self.claudeNotice == nil {
+                    self.claudeNotice = "Live session paused · checking OAuth"
+                }
+                self.usageDisplayChanged?()
+            }
+        }
+        claudeLiveFreshnessTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func scheduleClaudeTimer(after interval: TimeInterval, trigger: String, source: String) {
@@ -360,6 +515,7 @@ final class UsageStore: ObservableObject {
         let wait = UsageFormatting.durationText(remaining)
         claudeNotice = "Rate limited · retry in \(wait)"
         claude = .failed("Claude cooling down; retry in \(wait)")
+        claudeIsStale = false
         scheduleClaudeTimer(after: remaining, trigger: "claude-retry", source: "persisted-cooldown")
         AppLog.info("scheduler", "Claude persisted cooldown restored remainingSeconds=\(Int(remaining.rounded()))")
         return true
