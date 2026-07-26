@@ -31,6 +31,12 @@ to ask each tool individually. Usage HUD puts both meters in one small, always-a
 Everything runs on your Mac. There is no server, no account, no analytics, and no separate API key —
 it reuses the CLI sign-ins you already have.
 
+## What's new in v0.6.7
+
+- **Fresher Claude meters:** optional Live Claude Updates refresh the HUD from Claude Code sessions without adding usage-endpoint requests.
+- **Clear stale-data handling:** the last good Claude reading remains visible during temporary failures, with explicit stale markers and rate-limit-aware retry timing.
+- **True desktop mode:** with **Always on Top** off, the HUD stays pinned to the desktop across app and Space changes while normal windows remain above it.
+
 ## Install
 
 1. Download the zip from the [**latest release**](https://github.com/SmoothLayers/usagehud/releases/latest)
