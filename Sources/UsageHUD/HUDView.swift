@@ -40,6 +40,7 @@ struct HUDView: View {
                         state: store.codex,
                         compact: false,
                         notice: nil,
+                        isStale: false,
                         lastSuccess: store.codexLastSuccess,
                         nextRefresh: store.codexNextRefresh,
                         accent: Color(hudHex: settings.codexAccentHex),
@@ -56,6 +57,7 @@ struct HUDView: View {
                         state: store.claude,
                         compact: false,
                         notice: store.claudeNotice,
+                        isStale: store.claudeIsStale,
                         lastSuccess: store.claudeLastSuccess,
                         nextRefresh: store.claudeNextRefresh,
                         accent: Color(hudHex: settings.claudeAccentHex),
@@ -95,6 +97,7 @@ struct HUDView: View {
                         kind: .codex,
                         state: store.codex,
                         notice: nil,
+                        isStale: false,
                         lastSuccess: store.codexLastSuccess,
                         nextRefresh: store.codexNextRefresh,
                         accent: Color(hudHex: settings.codexAccentHex),
@@ -109,6 +112,7 @@ struct HUDView: View {
                         kind: .claude,
                         state: store.claude,
                         notice: store.claudeNotice,
+                        isStale: store.claudeIsStale,
                         lastSuccess: store.claudeLastSuccess,
                         nextRefresh: store.claudeNextRefresh,
                         accent: Color(hudHex: settings.claudeAccentHex),
@@ -245,6 +249,7 @@ private struct CompactUsageStrip: View {
     let kind: ProviderKind
     let state: ProviderState
     let notice: String?
+    let isStale: Bool
     let lastSuccess: Date?
     let nextRefresh: Date?
     let accent: Color
@@ -275,14 +280,18 @@ private struct CompactUsageStrip: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(accent.opacity(0.28), lineWidth: 1)
         )
-        .help(UsageFormatting.timingHelp(lastSuccess: lastSuccess, nextRefresh: nextRefresh))
+        .help(UsageFormatting.timingHelp(
+            lastSuccess: lastSuccess,
+            nextRefresh: nextRefresh,
+            source: state.usage?.source
+        ))
     }
 
     private func loaded(_ usage: ProviderUsage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 providerLabel
-                if let notice {
+                if isStale, let notice {
                     Text("STALE")
                         .font(.system(size: 7 * textScale, weight: .black, design: .monospaced))
                         .tracking(0.7)
@@ -371,6 +380,7 @@ private struct ProviderCard: View {
     let state: ProviderState
     let compact: Bool
     let notice: String?
+    let isStale: Bool
     let lastSuccess: Date?
     let nextRefresh: Date?
     let accent: Color
@@ -388,7 +398,7 @@ private struct ProviderCard: View {
                     .tracking(1.3)
                     .foregroundStyle(accent)
                 Spacer()
-                if let notice {
+                if isStale, let notice {
                     Text("STALE")
                         .font(.system(size: 8 * textScale, weight: .black, design: .monospaced))
                         .tracking(0.8)
@@ -441,6 +451,11 @@ private struct ProviderCard: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
+        .help(UsageFormatting.timingHelp(
+            lastSuccess: lastSuccess,
+            nextRefresh: nextRefresh,
+            source: state.usage?.source
+        ))
     }
 
     private func loaded(_ usage: ProviderUsage) -> some View {

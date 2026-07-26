@@ -82,8 +82,25 @@ struct SettingsView: View {
                     selected: settings.claudePollingInterval,
                     select: { settings.setClaudePollingInterval($0) }
                 )
+                Divider().overlay(Color.white.opacity(0.08))
+                HStack {
+                    SettingLabel(
+                        title: "LIVE CLAUDE UPDATES",
+                        detail: claudeLiveDetail
+                    )
+                    Spacer()
+                    InstrumentToggle(isOn: settings.claudeLiveUsageEnabled, tint: SettingsPalette.claude) {
+                        settings.setClaudeLiveUsageEnabled(!settings.claudeLiveUsageEnabled)
+                    }
+                }
             }
         }
+    }
+
+    private var claudeLiveDetail: String {
+        let explanation = "Updates usage after each Claude Code response; polling stays on as a fallback"
+        guard let status = store.claudeLiveStatus else { return explanation }
+        return status.hasPrefix("Live Claude updates enabled") ? explanation : status
     }
 
     private func cadenceRow(

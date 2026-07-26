@@ -24,6 +24,37 @@ struct ProviderUsage: Equatable {
     let primary: UsageWindow
     let secondary: UsageWindow?
     let fetchedAt: Date
+    let source: UsageSource
+
+    init(
+        kind: ProviderKind,
+        plan: String?,
+        primary: UsageWindow,
+        secondary: UsageWindow?,
+        fetchedAt: Date,
+        source: UsageSource = .providerAPI
+    ) {
+        self.kind = kind
+        self.plan = plan
+        self.primary = primary
+        self.secondary = secondary
+        self.fetchedAt = fetchedAt
+        self.source = source
+    }
+}
+
+enum UsageSource: String, Equatable {
+    case providerAPI = "provider-api"
+    case liveSession = "live-session"
+    case cliFallback = "cli-fallback"
+
+    var displayName: String {
+        switch self {
+        case .providerAPI: return "PROVIDER API"
+        case .liveSession: return "LIVE SESSION"
+        case .cliFallback: return "CLI FALLBACK"
+        }
+    }
 }
 
 enum ProviderState: Equatable {
@@ -126,8 +157,14 @@ enum UsageFormatting {
         return "NEXT \(hours)H"
     }
 
-    static func timingHelp(lastSuccess: Date?, nextRefresh: Date?, now: Date = .now) -> String {
-        "\(updatedStatusText(for: lastSuccess, now: now)) · \(nextStatusText(for: nextRefresh, now: now))"
+    static func timingHelp(
+        lastSuccess: Date?,
+        nextRefresh: Date?,
+        source: UsageSource? = nil,
+        now: Date = .now
+    ) -> String {
+        let timing = "\(updatedStatusText(for: lastSuccess, now: now)) · \(nextStatusText(for: nextRefresh, now: now))"
+        return source.map { "\(timing) · SOURCE \($0.displayName)" } ?? timing
     }
 }
 
@@ -136,11 +173,12 @@ enum MenuBarUsageFormatter {
         codex: ProviderState,
         claude: ProviderState,
         showCodex: Bool,
-        showClaude: Bool
+        showClaude: Bool,
+        claudeStale: Bool = false
     ) -> String {
         var parts: [String] = []
         if showCodex { parts.append("C\(remainingText(for: codex))") }
-        if showClaude { parts.append("A\(remainingText(for: claude))") }
+        if showClaude { parts.append("A\(remainingText(for: claude))\(claudeStale && claude.usage != nil ? "!" : "")") }
         return parts.joined(separator: " · ")
     }
 
