@@ -109,67 +109,13 @@ enum WindowSizing {
 
 }
 
-enum FullScreenSpaceDetection {
-    // Fullscreen windows on notched MacBooks stop short of the notch strip,
-    // so allow the window to be up to this much shorter than the screen. A
-    // maximized-but-not-fullscreen window can land in the same range; hiding
-    // the HUD behind a window that covers the whole screen anyway is
-    // visually indistinguishable from sinking it.
-    static let heightTolerance: CGFloat = 80
-
-    // A layer-0 window covering a screen is a full screen app (or a
-    // borderless window covering the whole screen, which the HUD should defer
-    // to just the same). The HUD's own windows are excluded by owner PID.
-    static func fullScreenWindowPresent(
-        entries: [[String: Any]],
-        screenSizes: [CGSize],
-        excludingPID pid: Int
-    ) -> Bool {
-        entries.contains { entry in
-            guard
-                (entry[kCGWindowLayer as String] as? Int) == 0,
-                (entry[kCGWindowOwnerPID as String] as? Int) != pid,
-                let boundsValue = entry[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsValue)
-            else { return false }
-            return screenSizes.contains { size in
-                abs(size.width - bounds.width) < 1
-                    && bounds.height >= size.height - heightTolerance
-                    && bounds.height <= size.height + 1
-            }
-        }
-    }
-
-    // Compact "L<layer>:<width>x<height>" listing of the frontmost windows so
-    // the log shows exactly what the detection saw.
-    static func windowSummary(entries: [[String: Any]], limit: Int = 8) -> String {
-        let described: [String] = entries.prefix(limit).compactMap { entry in
-            guard
-                let layer = entry[kCGWindowLayer as String] as? Int,
-                let boundsValue = entry[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsValue)
-            else { return nil }
-            return "L\(layer):\(Int(bounds.width))x\(Int(bounds.height))"
-        }
-        return described.isEmpty ? "<none>" : described.joined(separator: " ")
-    }
-
-    @MainActor
-    static func evaluateActiveSpace() -> (fullScreen: Bool, summary: String) {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let entries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return (false, "<window list unavailable>")
-        }
-        let fullScreen = fullScreenWindowPresent(
-            entries: entries,
-            screenSizes: NSScreen.screens.map { $0.frame.size },
-            excludingPID: Int(ProcessInfo.processInfo.processIdentifier)
-        )
-        return (fullScreen, windowSummary(entries: entries))
-    }
-}
-
 enum WindowInteraction {
+    // Keep the HUD with Finder's desktop content but below every normal
+    // application window when Always on Top is disabled.
+    static let desktopLevel = NSWindow.Level(
+        rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1
+    )
+
     static func styleMask(locked: Bool) -> NSWindow.StyleMask {
         var mask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .fullSizeContentView]
         if !locked { mask.insert(.resizable) }
@@ -177,7 +123,7 @@ enum WindowInteraction {
     }
 
     static func level(alwaysOnTop: Bool) -> NSWindow.Level {
-        alwaysOnTop ? .statusBar : .normal
+        alwaysOnTop ? .statusBar : desktopLevel
     }
 
     static func collectionBehavior(alwaysOnTop: Bool) -> NSWindow.CollectionBehavior {
@@ -203,11 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var clickThroughItem: NSMenuItem!
     private var alwaysOnTopItem: NSMenuItem!
     private var isApplyingProgrammaticResize = false
-    private var panelOrderingRaised = false
-    private var panelHiddenForFullScreen = false
     private var panelUserHidden = false
-    private var orderingRecheckTask: Task<Void, Never>?
-    private var mouseMonitors: [Any] = []
     private let notificationService = UsageNotificationService()
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: false,
@@ -232,11 +174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         createPanel()
         createStatusItem()
         applyInteractionSettings()
-        // Clicking the non-activating panel raises it to the front of the
-        // normal window level without ever activating this app, and windows
-        // that join all Spaces keep that raised ordering across Space
-        // switches. Sink the panel whenever the user changes app or Space so
-        // it can never linger above other windows while Always on Top is off.
+        // Reassert the desktop-layer placement after app and Space changes.
+        // The level itself keeps the HUD below every normal app window.
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         workspaceCenter.addObserver(
             self,
@@ -256,29 +195,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
-        // App and Space switches are not enough: clicking the panel raises
-        // it, and no workspace notification fires while the user keeps
-        // working inside the app that is already active. Track when the
-        // panel gets raised by a click and sink it again on the next click
-        // that lands anywhere else.
-        if let localMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in
-            MainActor.assumeIsolated {
-                if let self, event.window === self.panel {
-                    self.panelOrderingRaised = true
-                }
-            }
-            return event
-        }) {
-            mouseMonitors.append(localMonitor)
-        }
-        if let globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.panelOrderingRaised else { return }
-                self.sinkPanelIfNeeded(reason: "outside-click")
-            }
-        }) {
-            mouseMonitors.append(globalMonitor)
-        }
         updaterController.startUpdater()
         applyUpdateSettings()
         store.compactChanged = { [weak self] compact in
@@ -435,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func applyInteractionSettings() {
         guard panel != nil else { return }
-        let wasAlwaysOnTop = panel.level != .normal
+        let wasAlwaysOnTop = panel.level == WindowInteraction.level(alwaysOnTop: true)
         panel.isMovableByWindowBackground = !settings.lockHUD
         panel.ignoresMouseEvents = settings.clickThrough
         panel.level = WindowInteraction.level(alwaysOnTop: settings.alwaysOnTop)
@@ -449,13 +365,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lockHUDItem?.state = settings.lockHUD ? .on : .off
         clickThroughItem?.state = settings.clickThrough ? .on : .off
         alwaysOnTopItem?.state = settings.alwaysOnTop ? .on : .off
-        if settings.alwaysOnTop, panel.isVisible || panelHiddenForFullScreen {
-            panelHiddenForFullScreen = false
+        if settings.alwaysOnTop, panel.isVisible {
             panel.orderFrontRegardless()
         } else if wasAlwaysOnTop {
-            // Reset the ordering established by status-bar level. Merely changing
-            // the level can leave the panel ahead of the active app until macOS
-            // performs another window-ordering operation.
+            // Reinsert the panel at the front of the desktop layer after
+            // dropping it from status-bar level.
             updatePanelOrdering(reason: "always-on-top-disabled")
         }
         AppLog.info("window", "Interaction changed locked=\(settings.lockHUD) clickThrough=\(settings.clickThrough) alwaysOnTop=\(settings.alwaysOnTop)")
@@ -558,8 +472,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         // Activating the app (opening Settings, the setup assistant, or a
-        // permission alert) raises every window it owns, including the HUD
-        // panel. Sink it again whenever Always on Top is off.
+        // permission alert) can disturb the HUD panel's ordering. Re-anchor it
+        // to the desktop whenever Always on Top is off.
         updatePanelOrdering(reason: "app-activated")
         store.refreshStaleProviders(trigger: "app-activated")
     }
@@ -615,85 +529,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func workspaceOrderingChanged(_ notification: Notification) {
         updatePanelOrdering(reason: "workspace-changed")
-        // The Space-switch notification can arrive while the transition
-        // animation is still running, before the on-screen window list
-        // reflects the destination Space. Look again once the dust settles.
-        scheduleOrderingRecheck()
-    }
-
-    private func scheduleOrderingRecheck() {
-        orderingRecheckTask?.cancel()
-        orderingRecheckTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            guard !Task.isCancelled else { return }
-            self?.updatePanelOrdering(reason: "recheck")
-        }
     }
 
     private func updatePanelOrdering(reason: String) {
-        guard panel != nil, !settings.alwaysOnTop else { return }
-        let check = FullScreenSpaceDetection.evaluateActiveSpace()
-        AppLog.info("window", "Fullscreen check reason=\(reason) result=\(check.fullScreen) windows=\(check.summary)")
-        if check.fullScreen {
-            // Without Always on Top the HUD must never cover a full screen
-            // app, and no ordering call can push a canJoinAllSpaces panel
-            // behind a full screen window — the window server hosts such
-            // panels above the fullscreen Space. Take it off screen instead.
-            if panel.isVisible {
-                panel.orderOut(nil)
-                panelHiddenForFullScreen = true
-                AppLog.info("window", "Panel hidden reason=\(reason) fullscreen-space")
-            }
-            return
-        }
-        if panelHiddenForFullScreen, !panelUserHidden {
-            // A transition frame can read false while actually landing in a
-            // fullscreen Space, and restoring there would leave the panel
-            // floating over the fullscreen app. Hide instantly, but restore
-            // only after the settled recheck confirms the Space is normal.
-            guard reason == "recheck" else {
-                scheduleOrderingRecheck()
-                return
-            }
-            panelHiddenForFullScreen = false
-            // orderBack re-inserts the panel at the back of the normal level,
-            // so it returns already sunk.
-            panel.orderBack(nil)
-            AppLog.info("window", "Panel restored reason=\(reason) fullscreen-space-left")
-            return
-        }
-        sinkPanelIfNeeded(reason: reason)
-    }
-
-    private func sinkPanelIfNeeded(reason: String) {
-        guard panel != nil, panel.isVisible, !settings.alwaysOnTop else { return }
-        panelOrderingRaised = false
-        // orderBack(nil) is unreliable while this app is inactive: AppKit
-        // constrains plain ordering calls to the app's own windows, so the
-        // panel keeps floating above every other app. Ordering relative to
-        // an explicit window number goes through the window server and works
-        // across applications, so put the panel below the bottommost
-        // on-screen normal-level window instead.
-        if let bottommost = Self.bottommostNormalWindowNumber(excluding: panel.windowNumber) {
-            panel.order(.below, relativeTo: bottommost)
-            AppLog.info("window", "Panel sunk reason=\(reason) below=\(bottommost) alwaysOnTop=false")
-        } else {
-            panel.orderBack(nil)
-            AppLog.info("window", "Panel sunk reason=\(reason) fallback=orderBack alwaysOnTop=false")
-        }
-    }
-
-    private static func bottommostNormalWindowNumber(excluding panelWindowNumber: Int) -> Int? {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let entries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-        // The list is ordered front to back, so the last normal-level entry
-        // is the bottommost window on screen.
-        return entries.last(where: { entry in
-            (entry[kCGWindowLayer as String] as? Int) == 0
-                && (entry[kCGWindowNumber as String] as? Int) != panelWindowNumber
-        })?[kCGWindowNumber as String] as? Int
+        guard panel != nil, panel.isVisible, !panelUserHidden, !settings.alwaysOnTop else { return }
+        panel.orderFrontRegardless()
+        AppLog.info(
+            "window",
+            "Panel anchored reason=\(reason) desktopLevel=\(panel.level.rawValue) alwaysOnTop=false"
+        )
     }
 
     @objc private func showHUD() {
@@ -876,15 +720,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showPanel() {
         panelUserHidden = false
-        panelHiddenForFullScreen = false
-        if settings.alwaysOnTop {
-            panel.orderFrontRegardless()
-        } else {
-            // orderFront raises the panel just like a click does, so flag it
-            // for sinking on the next click outside the panel.
-            panel.orderFront(nil)
-            panelOrderingRaised = true
-        }
+        panel.orderFrontRegardless()
     }
 
     private func savePanelOrigin(_ origin: NSPoint) {

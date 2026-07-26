@@ -75,7 +75,7 @@ lines are left untouched. Turning the option off restores the original `ccstatus
 
 - **Move** it by dragging any empty area; **resize** from any edge — expanded and compact modes each remember their own size and position
 - **Compact mode** shrinks each provider to a slim strip, stacked vertically or side by side
-- **Always on Top** keeps the HUD above other windows (including full-screen apps) — or turn it off to let it behave like a normal window
+- **Always on Top** keeps the HUD above other windows (including full-screen apps) — turn it off to pin the HUD to the desktop behind normal app windows
 - **Lock HUD** pins it in place; **Click Through** passes mouse input to whatever is underneath
 - Hide it anytime — the **gauge icon in the menu bar** brings it back, and repairs the window if it ever ends up off-screen
 

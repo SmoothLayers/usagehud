@@ -56,13 +56,18 @@ final class UsageHUDTests: XCTestCase {
         )
     }
 
-    func testNativeBorderResizingTracksTheLockSetting() {
+    func testWindowInteractionTracksLockAndAlwaysOnTopSettings() {
         XCTAssertTrue(WindowInteraction.styleMask(locked: false).contains(.borderless))
         XCTAssertFalse(WindowInteraction.styleMask(locked: false).contains(.titled))
         XCTAssertTrue(WindowInteraction.styleMask(locked: false).contains(.resizable))
         XCTAssertFalse(WindowInteraction.styleMask(locked: true).contains(.resizable))
         XCTAssertEqual(WindowInteraction.level(alwaysOnTop: true), .statusBar)
-        XCTAssertEqual(WindowInteraction.level(alwaysOnTop: false), .normal)
+        XCTAssertEqual(WindowInteraction.level(alwaysOnTop: false), WindowInteraction.desktopLevel)
+        XCTAssertEqual(
+            WindowInteraction.desktopLevel.rawValue,
+            Int(CGWindowLevelForKey(.desktopIconWindow)) + 1
+        )
+        XCTAssertLessThan(WindowInteraction.desktopLevel.rawValue, NSWindow.Level.normal.rawValue)
         XCTAssertTrue(WindowInteraction.collectionBehavior(alwaysOnTop: true).contains(.fullScreenAuxiliary))
         XCTAssertFalse(WindowInteraction.collectionBehavior(alwaysOnTop: false).contains(.fullScreenAuxiliary))
     }
@@ -348,55 +353,6 @@ final class UsageHUDTests: XCTestCase {
         let explicit = AppSettings(defaults: defaults)
         XCTAssertEqual(explicit.codexPollingInterval, 900)
         XCTAssertEqual(explicit.claudePollingInterval, 900)
-    }
-
-    func testFullScreenSpaceDetectionMatchesScreenSizedNormalWindows() {
-        let screen = CGSize(width: 1_728, height: 1_117)
-        func entry(layer: Int, pid: Int, width: Double, height: Double) -> [String: Any] {
-            [
-                "kCGWindowLayer": layer,
-                "kCGWindowOwnerPID": pid,
-                "kCGWindowBounds": ["X": 0.0, "Y": 0.0, "Width": width, "Height": height],
-            ]
-        }
-
-        XCTAssertTrue(FullScreenSpaceDetection.fullScreenWindowPresent(
-            entries: [entry(layer: 0, pid: 999, width: 1_728, height: 1_117)],
-            screenSizes: [screen],
-            excludingPID: 1
-        ))
-        // Fullscreen windows on notched MacBooks stop short of the notch strip.
-        XCTAssertTrue(FullScreenSpaceDetection.fullScreenWindowPresent(
-            entries: [entry(layer: 0, pid: 999, width: 1_728, height: 1_079)],
-            screenSizes: [screen],
-            excludingPID: 1
-        ))
-        // A window much shorter than the screen is an ordinary window.
-        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
-            entries: [entry(layer: 0, pid: 999, width: 1_728, height: 1_000)],
-            screenSizes: [screen],
-            excludingPID: 1
-        ))
-        // The HUD's own windows never count as a full screen app.
-        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
-            entries: [entry(layer: 0, pid: 1, width: 1_728, height: 1_117)],
-            screenSizes: [screen],
-            excludingPID: 1
-        ))
-        // Elevated layers (menu bar, Dock) and ordinary windows never match.
-        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
-            entries: [
-                entry(layer: 25, pid: 999, width: 1_728, height: 1_117),
-                entry(layer: 0, pid: 999, width: 1_200, height: 800),
-            ],
-            screenSizes: [screen],
-            excludingPID: 1
-        ))
-        XCTAssertFalse(FullScreenSpaceDetection.fullScreenWindowPresent(
-            entries: [],
-            screenSizes: [screen],
-            excludingPID: 1
-        ))
     }
 
     func testClaudePollingEnforcesFiveMinuteFloorAndUpwardJitter() {
