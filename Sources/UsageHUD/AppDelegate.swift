@@ -344,7 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 showClaude: settings.showClaude,
                 kimi: store.kimi,
                 showKimi: settings.showKimi,
-                claudeStale: store.claudeIsStale
+                claudeStale: store.claudeIsStale,
+                kimiStale: store.kimiIsStale
             )
             statusItem.button?.imagePosition = .imageLeading
         } else {

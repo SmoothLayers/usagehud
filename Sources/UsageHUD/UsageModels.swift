@@ -177,12 +177,13 @@ enum MenuBarUsageFormatter {
         showClaude: Bool,
         kimi: ProviderState = .loading,
         showKimi: Bool = false,
-        claudeStale: Bool = false
+        claudeStale: Bool = false,
+        kimiStale: Bool = false
     ) -> String {
         var parts: [String] = []
         if showCodex { parts.append("C\(remainingText(for: codex))") }
         if showClaude { parts.append("A\(remainingText(for: claude))\(claudeStale && claude.usage != nil ? "!" : "")") }
-        if showKimi { parts.append("K\(remainingText(for: kimi))") }
+        if showKimi { parts.append("K\(remainingText(for: kimi))\(kimiStale && kimi.usage != nil ? "!" : "")") }
         return parts.joined(separator: " · ")
     }
 

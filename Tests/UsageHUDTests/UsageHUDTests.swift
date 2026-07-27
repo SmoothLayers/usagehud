@@ -789,6 +789,30 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertFalse(ClaudeFreshness.canRetain(usage(age: 86_401), after: UsageError.rateLimited(retryAfter: 60), now: now))
     }
 
+    func testKimiCacheRetentionIsBoundedAndExplainsAuthenticationFailures() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        func usage(age: TimeInterval) -> ProviderUsage {
+            ProviderUsage(
+                kind: .kimi,
+                plan: nil,
+                primary: UsageWindow(label: "5h", usedPercent: 50, resetsAt: nil),
+                secondary: nil,
+                fetchedAt: now.addingTimeInterval(-age)
+            )
+        }
+
+        XCTAssertTrue(KimiFreshness.canRetain(usage(age: 1_799), now: now))
+        XCTAssertFalse(KimiFreshness.canRetain(usage(age: 1_801), now: now))
+        XCTAssertEqual(
+            KimiFreshness.notice(after: UsageError.notLoggedIn("expired")),
+            "Session expired · showing last result"
+        )
+        XCTAssertEqual(
+            KimiFreshness.notice(after: UsageError.requestFailed("offline")),
+            "Update failed · showing last result"
+        )
+    }
+
     func testMenuBarMarksRetainedClaudeDataAsStale() {
         let usage = ProviderUsage(
             kind: .claude,
@@ -806,6 +830,28 @@ final class UsageHUDTests: XCTestCase {
                 claudeStale: true
             ),
             "A97!"
+        )
+    }
+
+    func testMenuBarMarksRetainedKimiDataAsStale() {
+        let usage = ProviderUsage(
+            kind: .kimi,
+            plan: nil,
+            primary: UsageWindow(label: "5h", usedPercent: 20, resetsAt: nil),
+            secondary: nil,
+            fetchedAt: .now
+        )
+        XCTAssertEqual(
+            MenuBarUsageFormatter.text(
+                codex: .loading,
+                claude: .loading,
+                showCodex: false,
+                showClaude: false,
+                kimi: .loaded(usage),
+                showKimi: true,
+                kimiStale: true
+            ),
+            "K80!"
         )
     }
 

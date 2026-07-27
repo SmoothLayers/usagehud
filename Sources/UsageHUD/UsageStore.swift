@@ -58,6 +58,21 @@ enum ClaudeFreshness {
     }
 }
 
+enum KimiFreshness {
+    static let cacheRetention: TimeInterval = 30 * 60
+
+    static func canRetain(_ usage: ProviderUsage, now: Date) -> Bool {
+        now.timeIntervalSince(usage.fetchedAt) <= cacheRetention
+    }
+
+    static func notice(after error: Error) -> String {
+        if case UsageError.notLoggedIn = error {
+            return "Session expired · showing last result"
+        }
+        return "Update failed · showing last result"
+    }
+}
+
 struct PersistedClaudeCooldown: Equatable {
     let retryAt: Date
     let backoffAttempt: Int
@@ -98,6 +113,8 @@ final class UsageStore: ObservableObject {
     @Published var isRefreshing = false
     @Published var claudeNotice: String?
     @Published var claudeIsStale = false
+    @Published var kimiNotice: String?
+    @Published var kimiIsStale = false
     @Published var claudeLastAttempt: Date?
     @Published var claudeLiveStatus: String?
     @Published var codexLastSuccess: Date?
@@ -378,10 +395,11 @@ final class UsageStore: ObservableObject {
             case let .success(usage):
                 kimi = .loaded(usage)
                 kimiLastSuccess = usage.fetchedAt
+                kimiNotice = nil
+                kimiIsStale = false
                 evaluateAlerts(for: usage)
             case let .failure(error):
-                AppLog.error("scheduler", "Kimi refresh failed: \(error.localizedDescription)")
-                kimi = .failed(error.localizedDescription)
+                retainKimiCacheOrFail(error: error, now: .now)
             }
             kimiIsRefreshing = false
             kimiRefreshTask = nil
@@ -389,6 +407,19 @@ final class UsageStore: ObservableObject {
             updateRefreshingState()
             usageDisplayChanged?()
             AppLog.info("scheduler", "Kimi refresh finished trigger=\(trigger)")
+        }
+    }
+
+    private func retainKimiCacheOrFail(error: Error, now: Date) {
+        if let usage = kimi.usage, KimiFreshness.canRetain(usage, now: now) {
+            AppLog.error("scheduler", "Kimi refresh failed; retaining bounded cache: \(error.localizedDescription)")
+            kimiNotice = KimiFreshness.notice(after: error)
+            kimiIsStale = true
+        } else {
+            AppLog.error("scheduler", "Kimi cached result unavailable: \(error.localizedDescription)")
+            kimi = .failed(error.localizedDescription)
+            kimiNotice = nil
+            kimiIsStale = false
         }
     }
 
