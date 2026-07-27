@@ -2,6 +2,18 @@ import Foundation
 import XCTest
 @testable import UsageHUD
 
+private actor KimiRequestRecorder {
+    private var requests: [URLRequest] = []
+
+    func append(_ request: URLRequest) {
+        requests.append(request)
+    }
+
+    func snapshot() -> [URLRequest] {
+        requests
+    }
+}
+
 final class UsageHUDTests: XCTestCase {
     func testWindowSizesPersistSeparatelyForExpandedAndCompactModes() throws {
         let suiteName = "UsageHUDTests.\(UUID().uuidString)"
@@ -932,6 +944,131 @@ final class UsageHUDTests: XCTestCase {
             credentials,
             now: Date(timeIntervalSince1970: 1_800_000_096)
         ))
+    }
+
+    func testKimiProviderRefreshesExpiredTokenAndPersistsRotatedCredentials() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let credentialsURL = root.appendingPathComponent("credentials/kimi-code.json")
+        let lockTargetURL = root.appendingPathComponent("oauth/kimi-code")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: credentialsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try JSONSerialization.data(withJSONObject: [
+            "access_token": "expired-access",
+            "refresh_token": "old-refresh",
+            "expires_at": 1_800_000_000,
+            "expires_in": 900,
+            "scope": "openid",
+            "token_type": "Bearer",
+            "preserved_test_field": "keep-me",
+        ]).write(to: credentialsURL)
+
+        let recorder = KimiRequestRecorder()
+        let now = Date(timeIntervalSince1970: 1_800_000_100)
+        let provider = KimiUsageProvider(
+            credentialsURL: credentialsURL,
+            baseURL: URL(string: "https://usage.test/coding/v1")!,
+            oauthBaseURL: URL(string: "https://auth.test")!,
+            refreshLockTargetURL: lockTargetURL,
+            dataForRequest: { request in
+                await recorder.append(request)
+                let data: Data
+                let status: Int
+                if request.url?.path == "/api/oauth/token" {
+                    status = 200
+                    data = Data(#"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":900,"scope":"openid","token_type":"Bearer"}"#.utf8)
+                } else {
+                    status = 200
+                    data = try JSONSerialization.data(withJSONObject: [
+                        "usage": ["limit": 200, "used": 20],
+                        "limits": [[
+                            "window": ["duration": 5, "timeUnit": "HOUR"],
+                            "detail": ["limit": 100, "used": 40],
+                        ]],
+                    ])
+                }
+                let response = HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: status,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (data, response)
+            },
+            now: { now }
+        )
+
+        let usage = try await provider.fetch()
+        XCTAssertEqual(usage.primary.remainingPercent, 60)
+
+        let requests = await recorder.snapshot()
+        XCTAssertEqual(requests.map(\.url?.path), ["/api/oauth/token", "/coding/v1/usages"])
+        XCTAssertEqual(requests.last?.value(forHTTPHeaderField: "Authorization"), "Bearer new-access")
+        let refreshBody = String(data: try XCTUnwrap(requests.first?.httpBody), encoding: .utf8)
+        XCTAssertTrue(refreshBody?.contains("grant_type=refresh_token") == true)
+        XCTAssertTrue(refreshBody?.contains("refresh_token=old-refresh") == true)
+
+        let stored = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: credentialsURL)) as? [String: Any]
+        )
+        XCTAssertEqual(stored["access_token"] as? String, "new-access")
+        XCTAssertEqual(stored["refresh_token"] as? String, "new-refresh")
+        XCTAssertEqual(stored["expires_at"] as? Double, 1_800_001_000)
+        XCTAssertEqual(stored["preserved_test_field"] as? String, "keep-me")
+        let attributes = try FileManager.default.attributesOfItem(atPath: credentialsURL.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: lockTargetURL.appendingPathExtension("lock").path))
+    }
+
+    func testKimiProviderKeepsCredentialsWhenRefreshTokenIsRejected() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let credentialsURL = root.appendingPathComponent("credentials/kimi-code.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: credentialsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try JSONSerialization.data(withJSONObject: [
+            "access_token": "expired-access",
+            "refresh_token": "rejected-refresh",
+            "expires_at": 1_800_000_000,
+            "expires_in": 900,
+        ]).write(to: credentialsURL)
+
+        let provider = KimiUsageProvider(
+            credentialsURL: credentialsURL,
+            baseURL: URL(string: "https://usage.test/coding/v1")!,
+            oauthBaseURL: URL(string: "https://auth.test")!,
+            refreshLockTargetURL: root.appendingPathComponent("oauth/kimi-code"),
+            dataForRequest: { request in
+                let data = Data(#"{"error":"invalid_grant"}"#.utf8)
+                let response = HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 400,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (data, response)
+            },
+            now: { Date(timeIntervalSince1970: 1_800_000_100) }
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected the rejected refresh token to require login")
+        } catch let UsageError.notLoggedIn(message) {
+            XCTAssertTrue(message.contains("run `kimi`"))
+        } catch {
+            XCTFail("Expected a login error, got \(error)")
+        }
+
+        let stored = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: credentialsURL)) as? [String: Any]
+        )
+        XCTAssertEqual(stored["access_token"] as? String, "expired-access")
+        XCTAssertEqual(stored["refresh_token"] as? String, "rejected-refresh")
     }
 
     func testCodexCurrentRateLimitResponseParsing() throws {

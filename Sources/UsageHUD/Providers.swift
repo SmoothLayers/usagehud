@@ -6,7 +6,9 @@ protocol UsageProviding {
 
 struct KimiCredentials: Equatable {
     let accessToken: String
+    let refreshToken: String?
     let expiresAt: Date
+    let expiresIn: TimeInterval
 }
 
 enum ExecutableLocator {
@@ -344,6 +346,9 @@ struct CodexUsageProvider: UsageProviding {
 
 struct KimiUsageProvider: UsageProviding {
     private static let defaultBaseURL = URL(string: "https://api.kimi.com/coding/v1")!
+    private static let defaultOAuthBaseURL = URL(string: "https://auth.kimi.com")!
+    private static let oauthClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
+    private static let refreshLeeway: TimeInterval = 5 * 60
     private static let shortWindowMinutes = 300
     private static let longWindowMinutes = 10_080
 
@@ -387,13 +392,24 @@ struct KimiUsageProvider: UsageProviding {
         }
     }
 
-    private struct CredentialDocument: Decodable {
+    private struct CredentialSnapshot {
+        let credentials: KimiCredentials
+        let document: [String: Any]
+    }
+
+    private struct RefreshDocument: Decodable {
         let accessToken: String
-        let expiresAt: FlexibleNumber
+        let refreshToken: String?
+        let expiresIn: FlexibleNumber
+        let scope: String?
+        let tokenType: String?
 
         enum CodingKeys: String, CodingKey {
             case accessToken = "access_token"
-            case expiresAt = "expires_at"
+            case refreshToken = "refresh_token"
+            case expiresIn = "expires_in"
+            case scope
+            case tokenType = "token_type"
         }
     }
 
@@ -438,13 +454,20 @@ struct KimiUsageProvider: UsageProviding {
 
     private let credentialsURL: URL
     private let baseURL: URL
-    private let session: URLSession
+    private let oauthBaseURL: URL
+    private let refreshLockTargetURL: URL
+    private let dataForRequest: (URLRequest) async throws -> (Data, URLResponse)
+    private let sleep: (UInt64) async throws -> Void
     private let now: () -> Date
 
     init(
         credentialsURL: URL? = nil,
         baseURL: URL? = nil,
+        oauthBaseURL: URL? = nil,
+        refreshLockTargetURL: URL? = nil,
         session: URLSession = .shared,
+        dataForRequest: ((URLRequest) async throws -> (Data, URLResponse))? = nil,
+        sleep: @escaping (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
         now: @escaping () -> Date = { .now }
     ) {
         let environment = ProcessInfo.processInfo.environment
@@ -454,36 +477,45 @@ struct KimiUsageProvider: UsageProviding {
                 : URL(fileURLWithPath: value, isDirectory: true)
         } ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".kimi-code", isDirectory: true)
-        self.credentialsURL = credentialsURL ?? kimiHome
+        let resolvedCredentialsURL = credentialsURL ?? kimiHome
             .appendingPathComponent("credentials", isDirectory: true)
             .appendingPathComponent("kimi-code.json")
+        self.credentialsURL = resolvedCredentialsURL
         self.baseURL = baseURL
             ?? environment["KIMI_CODE_BASE_URL"].flatMap(URL.init(string:))
             ?? Self.defaultBaseURL
-        self.session = session
+        self.oauthBaseURL = oauthBaseURL
+            ?? environment["KIMI_CODE_OAUTH_HOST"].flatMap(URL.init(string:))
+            ?? environment["KIMI_OAUTH_HOST"].flatMap(URL.init(string:))
+            ?? Self.defaultOAuthBaseURL
+        self.refreshLockTargetURL = refreshLockTargetURL ?? kimiHome
+            .appendingPathComponent("oauth", isDirectory: true)
+            .appendingPathComponent("kimi-code")
+        self.dataForRequest = dataForRequest ?? { request in
+            try await session.data(for: request)
+        }
+        self.sleep = sleep
         self.now = now
     }
 
     func fetch() async throws -> ProviderUsage {
-        let credentials = try Self.readCredentials(from: credentialsURL)
-        guard Self.isAccessTokenFresh(credentials, now: now()) else {
-            AppLog.error("kimi", "Kimi session expired")
-            throw UsageError.notLoggedIn("Kimi session expired — run `kimi`, then refresh")
-        }
-
         AppLog.info("kimi", "Usage request started")
-        var request = URLRequest(url: baseURL.appendingPathComponent("usages"))
-        request.timeoutInterval = 10
-        request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        var credentials = try await credentialsForRequest()
+        var response = try await requestUsage(with: credentials.accessToken)
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw UsageError.requestFailed("Kimi usage request returned no response")
+        // A token can be rejected before its local expiry time. Refresh once
+        // on 401, while still coordinating with Kimi Code's credential lock.
+        if response.http.statusCode == 401 {
+            AppLog.info("kimi", "Usage request unauthorized; refreshing credentials once")
+            credentials = try await credentialsForRequest(forceRefresh: true, original: credentials)
+            response = try await requestUsage(with: credentials.accessToken)
         }
+
+        let data = response.data
+        let http = response.http
         if http.statusCode == 401 || http.statusCode == 403 {
             AppLog.error("kimi", "Usage request unauthorized HTTP \(http.statusCode)")
-            throw UsageError.notLoggedIn("Kimi session expired — run `kimi`, then refresh")
+            throw Self.loginExpiredError
         }
         guard (200..<300).contains(http.statusCode) else {
             AppLog.error("kimi", "Usage request failed HTTP \(http.statusCode)")
@@ -498,18 +530,45 @@ struct KimiUsageProvider: UsageProviding {
         return usage
     }
 
+    private func requestUsage(with accessToken: String) async throws -> (data: Data, http: HTTPURLResponse) {
+        var request = URLRequest(url: baseURL.appendingPathComponent("usages"))
+        request.timeoutInterval = 10
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("usage-hud/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await dataForRequest(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw UsageError.requestFailed("Kimi usage request returned no response")
+        }
+        return (data, http)
+    }
+
     static func readCredentials(from url: URL) throws -> KimiCredentials {
+        try readCredentialSnapshot(from: url).credentials
+    }
+
+    private static func readCredentialSnapshot(from url: URL) throws -> CredentialSnapshot {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw UsageError.notLoggedIn("Sign in by running `kimi`")
         }
         do {
-            let document = try JSONDecoder().decode(CredentialDocument.self, from: Data(contentsOf: url))
-            guard !document.accessToken.isEmpty else {
+            guard let document = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
+                  let accessToken = document["access_token"] as? String,
+                  !accessToken.isEmpty,
+                  let expiresAt = flexibleDouble(document["expires_at"]) else {
                 throw UsageError.invalidResponse("Kimi credentials file is invalid")
             }
-            return KimiCredentials(
-                accessToken: document.accessToken,
-                expiresAt: Date(timeIntervalSince1970: document.expiresAt.value)
+            let refreshToken = (document["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let expiresIn = flexibleDouble(document["expires_in"]) ?? 0
+            return CredentialSnapshot(
+                credentials: KimiCredentials(
+                    accessToken: accessToken,
+                    refreshToken: refreshToken,
+                    expiresAt: Date(timeIntervalSince1970: expiresAt),
+                    expiresIn: expiresIn
+                ),
+                document: document
             )
         } catch let error as UsageError {
             throw error
@@ -523,6 +582,227 @@ struct KimiUsageProvider: UsageProviding {
         now: Date = .now
     ) -> Bool {
         credentials.expiresAt.timeIntervalSince(now) > 5
+    }
+
+    private static var loginExpiredError: UsageError {
+        UsageError.notLoggedIn("Kimi login expired — run `kimi`, then refresh")
+    }
+
+    private static func flexibleDouble(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string) }
+        return nil
+    }
+
+    private func credentialsForRequest(
+        forceRefresh: Bool = false,
+        original: KimiCredentials? = nil
+    ) async throws -> KimiCredentials {
+        let initial = try Self.readCredentialSnapshot(from: credentialsURL)
+        if !forceRefresh,
+           initial.credentials.expiresAt.timeIntervalSince(now()) > Self.refreshLeeway {
+            return initial.credentials
+        }
+
+        return try await withRefreshLock {
+            let current = try Self.readCredentialSnapshot(from: credentialsURL)
+            if forceRefresh,
+               let original,
+               current.credentials != original,
+               Self.isAccessTokenFresh(current.credentials, now: now()) {
+                AppLog.info("kimi", "Credentials were refreshed by another process")
+                return current.credentials
+            }
+            if !forceRefresh,
+               current.credentials.expiresAt.timeIntervalSince(now()) > Self.refreshLeeway {
+                return current.credentials
+            }
+            guard let refreshToken = current.credentials.refreshToken else {
+                if !forceRefresh, Self.isAccessTokenFresh(current.credentials, now: now()) {
+                    return current.credentials
+                }
+                AppLog.error("kimi", "Token refresh unavailable: refresh token missing")
+                throw Self.loginExpiredError
+            }
+
+            do {
+                let refreshed = try await refreshCredentials(current, refreshToken: refreshToken)
+                AppLog.info("kimi", "Kimi credentials refreshed")
+                return refreshed
+            } catch let error as UsageError {
+                if case .notLoggedIn = error { throw error }
+                if !forceRefresh, Self.isAccessTokenFresh(current.credentials, now: now()) {
+                    AppLog.warning("kimi", "Token refresh deferred; using current unexpired access token")
+                    return current.credentials
+                }
+                throw error
+            }
+        }
+    }
+
+    private func refreshCredentials(
+        _ current: CredentialSnapshot,
+        refreshToken: String
+    ) async throws -> KimiCredentials {
+        let tokenURL = oauthBaseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("oauth")
+            .appendingPathComponent("token")
+        var components = URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: Self.oauthClientID),
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: refreshToken),
+        ]
+
+        var lastError: UsageError?
+        for attempt in 0..<3 {
+            do {
+                var request = URLRequest(url: tokenURL)
+                request.httpMethod = "POST"
+                request.timeoutInterval = 10
+                request.httpBody = Data((components.percentEncodedQuery ?? "").utf8)
+                request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.setValue("usage-hud/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
+
+                let (data, response) = try await dataForRequest(request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw UsageError.requestFailed("Kimi token refresh returned no response")
+                }
+                if http.statusCode == 401 || http.statusCode == 403 || Self.oauthErrorCode(in: data) == "invalid_grant" {
+                    AppLog.error("kimi", "Token refresh rejected HTTP \(http.statusCode)")
+                    throw Self.loginExpiredError
+                }
+                guard http.statusCode == 200 else {
+                    let error = UsageError.requestFailed("Kimi token refresh failed (HTTP \(http.statusCode))")
+                    if Self.retryableRefreshStatusCodes.contains(http.statusCode), attempt < 2 {
+                        lastError = error
+                        try await sleep(UInt64(1 << attempt) * 1_000_000_000)
+                        continue
+                    }
+                    throw error
+                }
+
+                let refreshed = try JSONDecoder().decode(RefreshDocument.self, from: data)
+                guard !refreshed.accessToken.isEmpty, refreshed.expiresIn.value > 0 else {
+                    throw UsageError.invalidResponse("Kimi token refresh returned invalid credentials")
+                }
+                let refreshedAt = now()
+                let newCredentials = KimiCredentials(
+                    accessToken: refreshed.accessToken,
+                    refreshToken: refreshed.refreshToken ?? refreshToken,
+                    expiresAt: refreshedAt.addingTimeInterval(refreshed.expiresIn.value),
+                    expiresIn: refreshed.expiresIn.value
+                )
+                var document = current.document
+                document["access_token"] = newCredentials.accessToken
+                document["refresh_token"] = newCredentials.refreshToken
+                document["expires_at"] = floor(newCredentials.expiresAt.timeIntervalSince1970)
+                document["expires_in"] = newCredentials.expiresIn
+                if let scope = refreshed.scope { document["scope"] = scope }
+                if let tokenType = refreshed.tokenType { document["token_type"] = tokenType }
+                try Self.writeCredentialDocument(document, to: credentialsURL)
+                return newCredentials
+            } catch let error as UsageError {
+                throw error
+            } catch {
+                let requestError = UsageError.requestFailed("Kimi token refresh could not connect")
+                if attempt < 2 {
+                    lastError = requestError
+                    try await sleep(UInt64(1 << attempt) * 1_000_000_000)
+                    continue
+                }
+                throw requestError
+            }
+        }
+        throw lastError ?? UsageError.requestFailed("Kimi token refresh failed")
+    }
+
+    private static let retryableRefreshStatusCodes: Set<Int> = [429, 500, 502, 503, 504]
+
+    private static func oauthErrorCode(in data: Data) -> String? {
+        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+    }
+
+    private static func writeCredentialDocument(_ document: [String: Any], to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        let fileManager = FileManager.default
+        let temporaryURL = directory.appendingPathComponent(".\(url.lastPathComponent).tmp.\(UUID().uuidString)")
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            var data = try JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
+            data.append(0x0A)
+            guard fileManager.createFile(
+                atPath: temporaryURL.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw UsageError.requestFailed("Unable to update Kimi credentials")
+            }
+            let handle = try FileHandle(forWritingTo: temporaryURL)
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+            try handle.close()
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporaryURL.path)
+            if fileManager.fileExists(atPath: url.path) {
+                _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
+            } else {
+                try fileManager.moveItem(at: temporaryURL, to: url)
+            }
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch let error as UsageError {
+            try? fileManager.removeItem(at: temporaryURL)
+            throw error
+        } catch {
+            try? fileManager.removeItem(at: temporaryURL)
+            throw UsageError.requestFailed("Unable to update Kimi credentials")
+        }
+    }
+
+    private func withRefreshLock<T>(_ operation: () async throws -> T) async throws -> T {
+        let lockURL = refreshLockTargetURL.appendingPathExtension("lock")
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: refreshLockTargetURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if !fileManager.fileExists(atPath: refreshLockTargetURL.path) {
+            _ = fileManager.createFile(atPath: refreshLockTargetURL.path, contents: Data())
+        }
+
+        var acquired = false
+        for _ in 0..<60 {
+            do {
+                try fileManager.createDirectory(at: lockURL, withIntermediateDirectories: false)
+                acquired = true
+                break
+            } catch {
+                if let attributes = try? fileManager.attributesOfItem(atPath: lockURL.path),
+                   let modified = attributes[.modificationDate] as? Date,
+                   Date().timeIntervalSince(modified) > 10 {
+                    try? fileManager.removeItem(at: lockURL)
+                    continue
+                }
+                try await sleep(250_000_000)
+            }
+        }
+        guard acquired else {
+            throw UsageError.requestFailed("Kimi token refresh is busy; trying again soon")
+        }
+
+        let heartbeat = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { break }
+                try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: lockURL.path)
+            }
+        }
+        defer {
+            heartbeat.cancel()
+            try? fileManager.removeItem(at: lockURL)
+        }
+        return try await operation()
     }
 
     static func parseUsageData(_ data: Data, fetchedAt: Date = .now) throws -> ProviderUsage {

@@ -57,7 +57,7 @@ at least one supported CLI installed and signed in.
 |----------|--------|
 | **Codex** | Your installed `codex` CLI's `app-server` interface (`account/rateLimits/read`) |
 | **Claude** | Your existing Claude Code sign-in from its scoped Keychain item, legacy Keychain item, or credentials file, sent only to Anthropic's own usage endpoint |
-| **Kimi** | Your existing Kimi Code sign-in from `~/.kimi-code/credentials/kimi-code.json`, sent only to Kimi's own coding usage endpoint |
+| **Kimi** | Your existing Kimi Code sign-in from `~/.kimi-code/credentials/kimi-code.json`, refreshed through Kimi's OAuth endpoint and sent only to Kimi's coding usage endpoint |
 
 Kimi is initially hidden for existing installations so an update does not add an error card for
 people who do not use it. After signing in with `kimi`, enable **Kimi** under *Settings → Display*.
