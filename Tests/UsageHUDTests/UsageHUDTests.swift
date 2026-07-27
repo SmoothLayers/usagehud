@@ -54,6 +54,18 @@ final class UsageHUDTests: XCTestCase {
             WindowSizing.minimumSize(compact: true, visibleProviderCount: 2, layout: .horizontal),
             NSSize(width: 560, height: 88)
         )
+        XCTAssertEqual(
+            WindowSizing.defaultSize(compact: false, visibleProviderCount: 3),
+            NSSize(width: 630, height: 270)
+        )
+        XCTAssertEqual(
+            WindowSizing.defaultSize(compact: true, visibleProviderCount: 3),
+            NSSize(width: 350, height: 244)
+        )
+        XCTAssertEqual(
+            WindowSizing.minimumSize(compact: true, visibleProviderCount: 3, layout: .horizontal),
+            NSSize(width: 840, height: 88)
+        )
     }
 
     func testWindowInteractionTracksLockAndAlwaysOnTopSettings() {
@@ -80,8 +92,10 @@ final class UsageHUDTests: XCTestCase {
         let settings = AppSettings(defaults: defaults)
         XCTAssertEqual(settings.codexPollingInterval, 120)
         XCTAssertEqual(settings.claudePollingInterval, 300)
+        XCTAssertEqual(settings.kimiPollingInterval, 300)
         XCTAssertTrue(settings.showCodex)
         XCTAssertTrue(settings.showClaude)
+        XCTAssertFalse(settings.showKimi)
         XCTAssertEqual(settings.hudOpacity, 1)
         XCTAssertFalse(settings.showMenuBarUsage)
         XCTAssertTrue(settings.showResetCountdown)
@@ -95,11 +109,14 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(settings.cornerRadius, 14)
         XCTAssertEqual(settings.compactLayout, .vertical)
         XCTAssertEqual(settings.codexAccentHex, HUDAccentPalette.codexDefault)
+        XCTAssertEqual(settings.kimiAccentHex, HUDAccentPalette.kimiDefault)
         XCTAssertFalse(settings.claudeLiveUsageEnabled)
 
         settings.setCodexPollingInterval(600)
         settings.setClaudePollingInterval(900)
+        settings.setKimiPollingInterval(600)
         settings.setProvider(.claude, visible: false)
+        settings.setProvider(.kimi, visible: true)
         settings.setHUDOpacity(0.72)
         settings.setShowMenuBarUsage(true)
         settings.setShowResetCountdown(false)
@@ -115,13 +132,16 @@ final class UsageHUDTests: XCTestCase {
         settings.setCornerRadius(24)
         settings.setCompactLayout(.horizontal)
         settings.setAccent("63C5FF", provider: .codex)
+        settings.setAccent("F6C85F", provider: .kimi)
         settings.setClaudeLiveUsageEnabled(true)
 
         let restored = AppSettings(defaults: defaults)
         XCTAssertEqual(restored.codexPollingInterval, 600)
         XCTAssertEqual(restored.claudePollingInterval, 900)
+        XCTAssertEqual(restored.kimiPollingInterval, 600)
         XCTAssertTrue(restored.showCodex)
         XCTAssertFalse(restored.showClaude)
+        XCTAssertTrue(restored.showKimi)
         XCTAssertEqual(restored.hudOpacity, 0.72, accuracy: 0.001)
         XCTAssertTrue(restored.showMenuBarUsage)
         XCTAssertFalse(restored.showResetCountdown)
@@ -137,6 +157,7 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(restored.cornerRadius, 24)
         XCTAssertEqual(restored.compactLayout, .horizontal)
         XCTAssertEqual(restored.codexAccentHex, "63C5FF")
+        XCTAssertEqual(restored.kimiAccentHex, "F6C85F")
         XCTAssertTrue(restored.claudeLiveUsageEnabled)
     }
 
@@ -166,6 +187,23 @@ final class UsageHUDTests: XCTestCase {
             ),
             "A—"
         )
+        XCTAssertEqual(
+            MenuBarUsageFormatter.text(
+                codex: .loaded(usage),
+                claude: .loading,
+                showCodex: true,
+                showClaude: false,
+                kimi: .loaded(ProviderUsage(
+                    kind: .kimi,
+                    plan: nil,
+                    primary: UsageWindow(label: "5h", usedPercent: 16, resetsAt: nil),
+                    secondary: nil,
+                    fetchedAt: .now
+                )),
+                showKimi: true
+            ),
+            "C72 · K84"
+        )
     }
 
     func testAppSettingsRejectUnsupportedIntervalAndKeepingNoProviders() throws {
@@ -178,10 +216,15 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(settings.codexPollingInterval, 120)
         settings.setClaudePollingInterval(120)
         XCTAssertEqual(settings.claudePollingInterval, 300)
+        settings.setKimiPollingInterval(120)
+        XCTAssertEqual(settings.kimiPollingInterval, 300)
         settings.setProvider(.codex, visible: false)
         XCTAssertFalse(settings.showCodex)
+        settings.setProvider(.kimi, visible: true)
         settings.setProvider(.claude, visible: false)
-        XCTAssertTrue(settings.showClaude)
+        XCTAssertFalse(settings.showClaude)
+        settings.setProvider(.kimi, visible: false)
+        XCTAssertTrue(settings.showKimi)
     }
 
     func testUsageAlertEvaluatorIgnoresFirstReadingAndOrdinaryChanges() {
@@ -327,6 +370,7 @@ final class UsageHUDTests: XCTestCase {
     func testProvidersUseIndependentDefaultIntervals() {
         XCTAssertEqual(PollingSchedule.codexInterval, 120)
         XCTAssertEqual(PollingSchedule.claudeInterval, 300)
+        XCTAssertEqual(PollingSchedule.kimiInterval, 300)
     }
 
     func testLegacySharedPollingIntervalMigratesToPerProviderSettings() throws {
@@ -339,6 +383,7 @@ final class UsageHUDTests: XCTestCase {
         let migrated = AppSettings(defaults: defaults)
         XCTAssertEqual(migrated.codexPollingInterval, 600)
         XCTAssertEqual(migrated.claudePollingInterval, 600)
+        XCTAssertEqual(migrated.kimiPollingInterval, 600)
 
         // A legacy 2-minute choice is below Claude's floor and falls to its
         // default while Codex keeps it.
@@ -346,13 +391,16 @@ final class UsageHUDTests: XCTestCase {
         let floored = AppSettings(defaults: defaults)
         XCTAssertEqual(floored.codexPollingInterval, 120)
         XCTAssertEqual(floored.claudePollingInterval, 300)
+        XCTAssertEqual(floored.kimiPollingInterval, 300)
 
         // Explicit per-provider values win over the legacy key.
         defaults.set(900.0, forKey: "codexPollingInterval")
         defaults.set(900.0, forKey: "claudePollingInterval")
+        defaults.set(600.0, forKey: "kimiPollingInterval")
         let explicit = AppSettings(defaults: defaults)
         XCTAssertEqual(explicit.codexPollingInterval, 900)
         XCTAssertEqual(explicit.claudePollingInterval, 900)
+        XCTAssertEqual(explicit.kimiPollingInterval, 600)
     }
 
     func testClaudePollingEnforcesFiveMinuteFloorAndUpwardJitter() {
@@ -772,6 +820,72 @@ final class UsageHUDTests: XCTestCase {
         }
         let directory = URL(fileURLWithPath: codex).deletingLastPathComponent().path
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: "\(directory)/node"))
+    }
+
+    func testKimiUsageResponseMapsFiveHourAndWeeklyWindows() throws {
+        let fetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let response: [String: Any] = [
+            "usage": [
+                "limit": "1000",
+                "used": 250,
+                "resetTime": "2026-07-27T12:00:00Z",
+            ],
+            "limits": [
+                [
+                    "window": ["duration": 1, "timeUnit": "DAY"],
+                    "detail": ["limit": 200, "used": 20],
+                ],
+                [
+                    "window": ["duration": 5, "timeUnit": "HOUR"],
+                    "detail": [
+                        "limit": 100,
+                        "remaining": "60",
+                        "resetAt": "2026-07-26T18:30:00.000Z",
+                    ],
+                ],
+            ],
+        ]
+
+        let data = try JSONSerialization.data(withJSONObject: response)
+        let usage = try KimiUsageProvider.parseUsageData(data, fetchedAt: fetchedAt)
+        XCTAssertEqual(usage.kind, .kimi)
+        XCTAssertEqual(usage.primary.label, "5h window")
+        XCTAssertEqual(usage.primary.usedPercent, 40)
+        XCTAssertEqual(usage.primary.remainingPercent, 60)
+        XCTAssertEqual(usage.secondary?.label, "7d window")
+        XCTAssertEqual(usage.secondary?.usedPercent, 25)
+        XCTAssertEqual(usage.fetchedAt, fetchedAt)
+    }
+
+    func testKimiUsageResponseRejectsMissingQuotaWindows() {
+        let data = Data(#"{"limits":[]}"#.utf8)
+        XCTAssertThrowsError(try KimiUsageProvider.parseUsageData(data)) { error in
+            guard case UsageError.invalidResponse = error else {
+                return XCTFail("Expected an invalid response error, got \(error)")
+            }
+        }
+    }
+
+    func testKimiCredentialsRequireAUsableUnexpiredToken() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let credentialsURL = root.appendingPathComponent("kimi-code.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [
+            "access_token": "secret-test-token",
+            "expires_at": 1_800_000_100,
+        ]).write(to: credentialsURL)
+
+        let credentials = try KimiUsageProvider.readCredentials(from: credentialsURL)
+        XCTAssertEqual(credentials.accessToken, "secret-test-token")
+        XCTAssertTrue(KimiUsageProvider.isAccessTokenFresh(
+            credentials,
+            now: Date(timeIntervalSince1970: 1_800_000_000)
+        ))
+        XCTAssertFalse(KimiUsageProvider.isAccessTokenFresh(
+            credentials,
+            now: Date(timeIntervalSince1970: 1_800_000_096)
+        ))
     }
 
     func testCodexCurrentRateLimitResponseParsing() throws {

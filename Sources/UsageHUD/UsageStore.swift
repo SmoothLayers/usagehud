@@ -4,6 +4,7 @@ import Foundation
 enum PollingSchedule {
     static let codexInterval: TimeInterval = AppSettings.defaultCodexPollingInterval
     static let claudeInterval: TimeInterval = AppSettings.defaultClaudePollingInterval
+    static let kimiInterval: TimeInterval = AppSettings.defaultKimiPollingInterval
 }
 
 enum ClaudePolling {
@@ -91,6 +92,7 @@ enum ClaudeCooldownPersistence {
 final class UsageStore: ObservableObject {
     @Published var codex: ProviderState = .loading
     @Published var claude: ProviderState = .loading
+    @Published var kimi: ProviderState = .loading
     @Published var isCompact: Bool
     @Published var lastRefresh: Date?
     @Published var isRefreshing = false
@@ -100,8 +102,10 @@ final class UsageStore: ObservableObject {
     @Published var claudeLiveStatus: String?
     @Published var codexLastSuccess: Date?
     @Published var claudeLastSuccess: Date?
+    @Published var kimiLastSuccess: Date?
     @Published var codexNextRefresh: Date?
     @Published var claudeNextRefresh: Date?
+    @Published var kimiNextRefresh: Date?
     @Published private(set) var usageAlertsEnabled: Bool
 
     var compactChanged: ((Bool) -> Void)?
@@ -113,11 +117,14 @@ final class UsageStore: ObservableObject {
     private let alertTracker: UsageAlertTracker
     private var codexRefreshTask: Task<Void, Never>?
     private var claudeRefreshTask: Task<Void, Never>?
+    private var kimiRefreshTask: Task<Void, Never>?
     private var codexTimer: Timer?
     private var claudeTimer: Timer?
+    private var kimiTimer: Timer?
     private var claudeLiveFreshnessTimer: Timer?
     private var codexIsRefreshing = false
     private var claudeIsRefreshing = false
+    private var kimiIsRefreshing = false
     private var hasStarted = false
     private var claudeRateLimitedUntil: Date?
     private var claudeBackoffAttempt = 0
@@ -137,7 +144,7 @@ final class UsageStore: ObservableObject {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        AppLog.info("scheduler", "Independent polling started codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s")
+        AppLog.info("scheduler", "Independent polling started codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s kimi=\(Int(settings.kimiPollingInterval))s")
         if settings.showCodex {
             refreshCodex(trigger: "startup")
             scheduleCodexTimer()
@@ -145,11 +152,16 @@ final class UsageStore: ObservableObject {
         if settings.showClaude, !restoreClaudeCooldownIfNeeded() {
             refreshClaude(trigger: "startup")
         }
+        if settings.showKimi {
+            refreshKimi(trigger: "startup")
+            scheduleKimiTimer()
+        }
     }
 
     func refresh() {
         if settings.showCodex { refreshCodex(trigger: "manual") }
         if settings.showClaude { refreshClaude(trigger: "manual") }
+        if settings.showKimi { refreshKimi(trigger: "manual") }
     }
 
     func refreshStaleProviders(trigger: String, now: Date = .now) {
@@ -161,6 +173,10 @@ final class UsageStore: ObservableObject {
         if settings.showClaude,
            claudeLastSuccess == nil || now.timeIntervalSince(claudeLastSuccess!) >= ClaudePolling.interval(from: settings.claudePollingInterval) {
             refreshClaude(trigger: trigger)
+        }
+        if settings.showKimi,
+           kimiLastSuccess == nil || now.timeIntervalSince(kimiLastSuccess!) >= settings.kimiPollingInterval {
+            refreshKimi(trigger: trigger)
         }
     }
 
@@ -214,17 +230,21 @@ final class UsageStore: ObservableObject {
             alertTracker.clear()
             primeAlertBaseline(from: codex.usage)
             primeAlertBaseline(from: claude.usage)
+            primeAlertBaseline(from: kimi.usage)
         }
         AppLog.info("alerts", "Usage alerts enabled=\(enabled)")
     }
 
     func applyPollingSettings() {
-        guard codexTimer != nil || claudeTimer != nil || codexLastSuccess != nil || claudeLastSuccess != nil else { return }
+        guard codexTimer != nil || claudeTimer != nil || kimiTimer != nil
+            || codexLastSuccess != nil || claudeLastSuccess != nil || kimiLastSuccess != nil
+        else { return }
         if settings.showCodex { scheduleCodexTimer() }
         if settings.showClaude, claudeRateLimitedUntil == nil, !claudeIsRefreshing {
             scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "settings")
         }
-        AppLog.info("scheduler", "Polling interval changed codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s")
+        if settings.showKimi { scheduleKimiTimer() }
+        AppLog.info("scheduler", "Polling interval changed codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s kimi=\(Int(settings.kimiPollingInterval))s")
     }
 
     func applyProviderSettings() {
@@ -252,13 +272,24 @@ final class UsageStore: ObservableObject {
             claudeLiveFreshnessTimer = nil
             claudeNextRefresh = nil
         }
-        AppLog.info("scheduler", "Provider visibility changed codex=\(settings.showCodex) claude=\(settings.showClaude)")
+
+        if settings.showKimi {
+            let wasInactive = kimiTimer == nil
+            if wasInactive { scheduleKimiTimer() }
+            if wasInactive, !kimiIsRefreshing { refreshKimi(trigger: "provider-enabled") }
+        } else {
+            kimiTimer?.invalidate()
+            kimiTimer = nil
+            kimiNextRefresh = nil
+        }
+        AppLog.info("scheduler", "Provider visibility changed codex=\(settings.showCodex) claude=\(settings.showClaude) kimi=\(settings.showKimi)")
     }
 
     func applyAlertSettings() {
         alertTracker.clear()
         primeAlertBaseline(from: codex.usage)
         primeAlertBaseline(from: claude.usage)
+        primeAlertBaseline(from: kimi.usage)
         AppLog.info("alerts", "Custom alert thresholds changed")
     }
 
@@ -309,6 +340,55 @@ final class UsageStore: ObservableObject {
             updateRefreshingState()
             usageDisplayChanged?()
             AppLog.info("scheduler", "Codex refresh finished trigger=\(trigger)")
+        }
+    }
+
+    private func scheduleKimiTimer() {
+        kimiTimer?.invalidate()
+        guard settings.showKimi else { return }
+        let interval = settings.kimiPollingInterval
+        kimiNextRefresh = Date.now.addingTimeInterval(interval)
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.kimiNextRefresh = Date.now.addingTimeInterval(self.settings.kimiPollingInterval)
+                self.refreshKimi(trigger: "timer")
+            }
+        }
+        kimiTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func refreshKimi(trigger: String) {
+        guard settings.showKimi else {
+            AppLog.info("scheduler", "Kimi refresh skipped trigger=\(trigger) reason=hidden")
+            return
+        }
+        guard !kimiIsRefreshing else {
+            AppLog.info("scheduler", "Kimi refresh skipped trigger=\(trigger) reason=already-refreshing")
+            return
+        }
+
+        kimiIsRefreshing = true
+        updateRefreshingState()
+        AppLog.info("scheduler", "Kimi refresh started trigger=\(trigger)")
+        kimiRefreshTask = Task {
+            let result = await Self.result(from: KimiUsageProvider())
+            switch result {
+            case let .success(usage):
+                kimi = .loaded(usage)
+                kimiLastSuccess = usage.fetchedAt
+                evaluateAlerts(for: usage)
+            case let .failure(error):
+                AppLog.error("scheduler", "Kimi refresh failed: \(error.localizedDescription)")
+                kimi = .failed(error.localizedDescription)
+            }
+            kimiIsRefreshing = false
+            kimiRefreshTask = nil
+            lastRefresh = .now
+            updateRefreshingState()
+            usageDisplayChanged?()
+            AppLog.info("scheduler", "Kimi refresh finished trigger=\(trigger)")
         }
     }
 
@@ -527,7 +607,7 @@ final class UsageStore: ObservableObject {
     }
 
     private func updateRefreshingState() {
-        isRefreshing = codexIsRefreshing || claudeIsRefreshing
+        isRefreshing = codexIsRefreshing || claudeIsRefreshing || kimiIsRefreshing
     }
 
     private func evaluateAlerts(for usage: ProviderUsage) {

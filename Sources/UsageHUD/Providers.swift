@@ -4,6 +4,11 @@ protocol UsageProviding {
     func fetch() async throws -> ProviderUsage
 }
 
+struct KimiCredentials: Equatable {
+    let accessToken: String
+    let expiresAt: Date
+}
+
 enum ExecutableLocator {
     private static let cacheLock = NSLock()
     private static var cache: [String: String] = [:]
@@ -334,6 +339,240 @@ struct CodexUsageProvider: UsageProviding {
             usedPercent: used,
             resetsAt: resetSeconds.map { Date(timeIntervalSince1970: $0) }
         )
+    }
+}
+
+struct KimiUsageProvider: UsageProviding {
+    private static let defaultBaseURL = URL(string: "https://api.kimi.com/coding/v1")!
+    private static let shortWindowMinutes = 300
+    private static let longWindowMinutes = 10_080
+
+    private struct FlexibleNumber: Decodable {
+        let value: Double
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let number = try? container.decode(Double.self) {
+                value = number
+                return
+            }
+            if let string = try? container.decode(String.self), let number = Double(string) {
+                value = number
+                return
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected a number or numeric string"
+            )
+        }
+    }
+
+    private struct FlexibleDate: Decodable {
+        let value: Date?
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let timestamp = try? container.decode(Double.self) {
+                let seconds = timestamp > 10_000_000_000 ? timestamp / 1_000 : timestamp
+                value = Date(timeIntervalSince1970: seconds)
+                return
+            }
+            guard let text = try? container.decode(String.self) else {
+                value = nil
+                return
+            }
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            value = fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+        }
+    }
+
+    private struct CredentialDocument: Decodable {
+        let accessToken: String
+        let expiresAt: FlexibleNumber
+
+        enum CodingKeys: String, CodingKey {
+            case accessToken = "access_token"
+            case expiresAt = "expires_at"
+        }
+    }
+
+    private struct QuotaDetail: Decodable {
+        let limit: FlexibleNumber?
+        let used: FlexibleNumber?
+        let remaining: FlexibleNumber?
+        let resetTime: FlexibleDate?
+        let resetAt: FlexibleDate?
+    }
+
+    private struct QuotaDuration: Decodable {
+        let duration: FlexibleNumber?
+        let timeUnit: String?
+
+        var minutes: Int? {
+            guard let duration else { return nil }
+            let unit = (timeUnit ?? "").uppercased()
+            let value: Double
+            if unit.contains("SECOND") {
+                value = duration.value / 60
+            } else if unit.contains("HOUR") {
+                value = duration.value * 60
+            } else if unit.contains("DAY") {
+                value = duration.value * 24 * 60
+            } else {
+                value = duration.value
+            }
+            return Int(value.rounded())
+        }
+    }
+
+    private struct QuotaLimit: Decodable {
+        let window: QuotaDuration?
+        let detail: QuotaDetail?
+    }
+
+    private struct QuotaPayload: Decodable {
+        let usage: QuotaDetail?
+        let limits: [QuotaLimit]?
+    }
+
+    private let credentialsURL: URL
+    private let baseURL: URL
+    private let session: URLSession
+    private let now: () -> Date
+
+    init(
+        credentialsURL: URL? = nil,
+        baseURL: URL? = nil,
+        session: URLSession = .shared,
+        now: @escaping () -> Date = { .now }
+    ) {
+        let environment = ProcessInfo.processInfo.environment
+        let kimiHome = environment["KIMI_CODE_HOME"].flatMap { value in
+            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : URL(fileURLWithPath: value, isDirectory: true)
+        } ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".kimi-code", isDirectory: true)
+        self.credentialsURL = credentialsURL ?? kimiHome
+            .appendingPathComponent("credentials", isDirectory: true)
+            .appendingPathComponent("kimi-code.json")
+        self.baseURL = baseURL
+            ?? environment["KIMI_CODE_BASE_URL"].flatMap(URL.init(string:))
+            ?? Self.defaultBaseURL
+        self.session = session
+        self.now = now
+    }
+
+    func fetch() async throws -> ProviderUsage {
+        let credentials = try Self.readCredentials(from: credentialsURL)
+        guard Self.isAccessTokenFresh(credentials, now: now()) else {
+            AppLog.error("kimi", "Kimi session expired")
+            throw UsageError.notLoggedIn("Kimi session expired — run `kimi`, then refresh")
+        }
+
+        AppLog.info("kimi", "Usage request started")
+        var request = URLRequest(url: baseURL.appendingPathComponent("usages"))
+        request.timeoutInterval = 10
+        request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw UsageError.requestFailed("Kimi usage request returned no response")
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            AppLog.error("kimi", "Usage request unauthorized HTTP \(http.statusCode)")
+            throw UsageError.notLoggedIn("Kimi session expired — run `kimi`, then refresh")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            AppLog.error("kimi", "Usage request failed HTTP \(http.statusCode)")
+            throw UsageError.requestFailed("Kimi usage request failed (HTTP \(http.statusCode))")
+        }
+
+        let usage = try Self.parseUsageData(data, fetchedAt: now())
+        AppLog.info(
+            "kimi",
+            "Usage request succeeded remaining=\(Int(usage.primary.remainingPercent.rounded()))% window=\(usage.primary.label)"
+        )
+        return usage
+    }
+
+    static func readCredentials(from url: URL) throws -> KimiCredentials {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw UsageError.notLoggedIn("Sign in by running `kimi`")
+        }
+        do {
+            let document = try JSONDecoder().decode(CredentialDocument.self, from: Data(contentsOf: url))
+            guard !document.accessToken.isEmpty else {
+                throw UsageError.invalidResponse("Kimi credentials file is invalid")
+            }
+            return KimiCredentials(
+                accessToken: document.accessToken,
+                expiresAt: Date(timeIntervalSince1970: document.expiresAt.value)
+            )
+        } catch let error as UsageError {
+            throw error
+        } catch {
+            throw UsageError.invalidResponse("Unable to read Kimi credentials")
+        }
+    }
+
+    static func isAccessTokenFresh(
+        _ credentials: KimiCredentials,
+        now: Date = .now
+    ) -> Bool {
+        credentials.expiresAt.timeIntervalSince(now) > 5
+    }
+
+    static func parseUsageData(_ data: Data, fetchedAt: Date = .now) throws -> ProviderUsage {
+        do {
+            let payload = try JSONDecoder().decode(QuotaPayload.self, from: data)
+            let longWindow = makeWindow(from: payload.usage, minutes: longWindowMinutes)
+            let shortCandidates = (payload.limits ?? []).compactMap { item -> (UsageWindow, Int)? in
+                let minutes = item.window?.minutes ?? shortWindowMinutes
+                guard let window = makeWindow(from: item.detail, minutes: minutes) else { return nil }
+                return (window, minutes)
+            }
+            let shortWindow = shortCandidates.min {
+                abs($0.1 - shortWindowMinutes) < abs($1.1 - shortWindowMinutes)
+            }?.0
+
+            guard let primary = shortWindow ?? longWindow else {
+                throw UsageError.invalidResponse("Kimi usage response did not include quota windows")
+            }
+            return ProviderUsage(
+                kind: .kimi,
+                plan: nil,
+                primary: primary,
+                secondary: shortWindow == nil ? nil : longWindow,
+                fetchedAt: fetchedAt,
+                source: .providerAPI
+            )
+        } catch let error as UsageError {
+            throw error
+        } catch {
+            throw UsageError.invalidResponse("Kimi usage response could not be decoded")
+        }
+    }
+
+    private static func makeWindow(from detail: QuotaDetail?, minutes: Int) -> UsageWindow? {
+        guard let detail, let limit = detail.limit?.value, limit > 0 else { return nil }
+        let consumed = detail.used?.value ?? detail.remaining.map { limit - $0.value }
+        guard let consumed else { return nil }
+        return UsageWindow(
+            label: windowLabel(minutes: minutes),
+            usedPercent: min(100, max(0, consumed / limit * 100)),
+            resetsAt: detail.resetTime?.value ?? detail.resetAt?.value
+        )
+    }
+
+    private static func windowLabel(minutes: Int) -> String {
+        if minutes == shortWindowMinutes { return "5h window" }
+        if minutes == longWindowMinutes { return "7d window" }
+        if minutes % (24 * 60) == 0 { return "\(minutes / (24 * 60))d window" }
+        if minutes % 60 == 0 { return "\(minutes / 60)h window" }
+        return "\(minutes)m window"
     }
 }
 

@@ -3,6 +3,7 @@ import Foundation
 enum ProviderKind: String, CaseIterable, Identifiable {
     case codex
     case claude
+    case kimi
 
     var id: String { rawValue }
     var displayName: String { rawValue.uppercased() }
@@ -174,11 +175,14 @@ enum MenuBarUsageFormatter {
         claude: ProviderState,
         showCodex: Bool,
         showClaude: Bool,
+        kimi: ProviderState = .loading,
+        showKimi: Bool = false,
         claudeStale: Bool = false
     ) -> String {
         var parts: [String] = []
         if showCodex { parts.append("C\(remainingText(for: codex))") }
         if showClaude { parts.append("A\(remainingText(for: claude))\(claudeStale && claude.usage != nil ? "!" : "")") }
+        if showKimi { parts.append("K\(remainingText(for: kimi))") }
         return parts.joined(separator: " · ")
     }
 

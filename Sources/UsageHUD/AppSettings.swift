@@ -17,13 +17,17 @@ enum AppSettingsChange {
 final class AppSettings: ObservableObject {
     static let codexPollingChoices: [TimeInterval] = [2 * 60, 5 * 60, 10 * 60, 15 * 60]
     static let claudePollingChoices: [TimeInterval] = [5 * 60, 10 * 60, 15 * 60]
+    static let kimiPollingChoices: [TimeInterval] = [5 * 60, 10 * 60, 15 * 60]
     static let defaultCodexPollingInterval: TimeInterval = 2 * 60
     static let defaultClaudePollingInterval: TimeInterval = 5 * 60
+    static let defaultKimiPollingInterval: TimeInterval = 5 * 60
 
     @Published private(set) var codexPollingInterval: TimeInterval
     @Published private(set) var claudePollingInterval: TimeInterval
+    @Published private(set) var kimiPollingInterval: TimeInterval
     @Published private(set) var showCodex: Bool
     @Published private(set) var showClaude: Bool
+    @Published private(set) var showKimi: Bool
     @Published private(set) var hudOpacity: Double
     @Published private(set) var showMenuBarUsage: Bool
     @Published private(set) var showResetCountdown: Bool
@@ -39,6 +43,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var compactLayout: CompactLayout
     @Published private(set) var codexAccentHex: String
     @Published private(set) var claudeAccentHex: String
+    @Published private(set) var kimiAccentHex: String
     @Published private(set) var claudeLiveUsageEnabled: Bool
 
     var changed: ((AppSettingsChange) -> Void)?
@@ -48,8 +53,10 @@ final class AppSettings: ObservableObject {
         static let legacyPollingInterval = "pollingInterval"
         static let codexPollingInterval = "codexPollingInterval"
         static let claudePollingInterval = "claudePollingInterval"
+        static let kimiPollingInterval = "kimiPollingInterval"
         static let showCodex = "showCodex"
         static let showClaude = "showClaude"
+        static let showKimi = "showKimi"
         static let hudOpacity = "hudOpacity"
         static let showMenuBarUsage = "showMenuBarUsage"
         static let showResetCountdown = "showResetCountdown"
@@ -64,6 +71,7 @@ final class AppSettings: ObservableObject {
         static let compactLayout = "compactLayout"
         static let codexAccentHex = "codexAccentHex"
         static let claudeAccentHex = "claudeAccentHex"
+        static let kimiAccentHex = "kimiAccentHex"
         static let claudeLiveUsageEnabled = "claudeLiveUsageEnabled"
     }
 
@@ -85,14 +93,24 @@ final class AppSettings: ObservableObject {
             choices: Self.claudePollingChoices,
             fallback: Self.defaultClaudePollingInterval
         )
+        kimiPollingInterval = Self.migratedInterval(
+            saved: defaults.double(forKey: Key.kimiPollingInterval),
+            legacy: legacyInterval,
+            choices: Self.kimiPollingChoices,
+            fallback: Self.defaultKimiPollingInterval
+        )
         let savedShowCodex = defaults.object(forKey: Key.showCodex) == nil
             ? true
             : defaults.bool(forKey: Key.showCodex)
         let savedShowClaude = defaults.object(forKey: Key.showClaude) == nil
             ? true
             : defaults.bool(forKey: Key.showClaude)
-        showCodex = !savedShowCodex && !savedShowClaude ? true : savedShowCodex
+        let savedShowKimi = defaults.object(forKey: Key.showKimi) == nil
+            ? false
+            : defaults.bool(forKey: Key.showKimi)
+        showCodex = !savedShowCodex && !savedShowClaude && !savedShowKimi ? true : savedShowCodex
         showClaude = savedShowClaude
+        showKimi = savedShowKimi
         let savedOpacity = defaults.double(forKey: Key.hudOpacity)
         hudOpacity = defaults.object(forKey: Key.hudOpacity) == nil
             ? 1
@@ -129,11 +147,13 @@ final class AppSettings: ObservableObject {
         codexAccentHex = HUDAccentPalette.choices.contains(savedCodexAccent) ? savedCodexAccent : HUDAccentPalette.codexDefault
         let savedClaudeAccent = defaults.string(forKey: Key.claudeAccentHex) ?? HUDAccentPalette.claudeDefault
         claudeAccentHex = HUDAccentPalette.choices.contains(savedClaudeAccent) ? savedClaudeAccent : HUDAccentPalette.claudeDefault
+        let savedKimiAccent = defaults.string(forKey: Key.kimiAccentHex) ?? HUDAccentPalette.kimiDefault
+        kimiAccentHex = HUDAccentPalette.choices.contains(savedKimiAccent) ? savedKimiAccent : HUDAccentPalette.kimiDefault
         claudeLiveUsageEnabled = defaults.bool(forKey: Key.claudeLiveUsageEnabled)
     }
 
     var visibleProviderCount: Int {
-        (showCodex ? 1 : 0) + (showClaude ? 1 : 0)
+        (showCodex ? 1 : 0) + (showClaude ? 1 : 0) + (showKimi ? 1 : 0)
     }
 
     func setCodexPollingInterval(_ interval: TimeInterval) {
@@ -150,6 +170,13 @@ final class AppSettings: ObservableObject {
         changed?(.polling)
     }
 
+    func setKimiPollingInterval(_ interval: TimeInterval) {
+        guard Self.kimiPollingChoices.contains(interval), kimiPollingInterval != interval else { return }
+        kimiPollingInterval = interval
+        defaults.set(interval, forKey: Key.kimiPollingInterval)
+        changed?(.polling)
+    }
+
     private static func migratedInterval(
         saved: Double,
         legacy: Double,
@@ -162,18 +189,30 @@ final class AppSettings: ObservableObject {
     }
 
     func setProvider(_ provider: ProviderKind, visible: Bool) {
-        let current = provider == .codex ? showCodex : showClaude
+        let current = isProviderVisible(provider)
         guard current != visible else { return }
         if !visible && visibleProviderCount == 1 { return }
 
-        if provider == .codex {
+        switch provider {
+        case .codex:
             showCodex = visible
             defaults.set(visible, forKey: Key.showCodex)
-        } else {
+        case .claude:
             showClaude = visible
             defaults.set(visible, forKey: Key.showClaude)
+        case .kimi:
+            showKimi = visible
+            defaults.set(visible, forKey: Key.showKimi)
         }
         changed?(.providers)
+    }
+
+    func isProviderVisible(_ provider: ProviderKind) -> Bool {
+        switch provider {
+        case .codex: return showCodex
+        case .claude: return showClaude
+        case .kimi: return showKimi
+        }
     }
 
     func setHUDOpacity(_ opacity: Double) {
@@ -286,16 +325,29 @@ final class AppSettings: ObservableObject {
 
     func setAccent(_ hex: String, provider: ProviderKind) {
         guard HUDAccentPalette.choices.contains(hex) else { return }
-        if provider == .codex {
+        switch provider {
+        case .codex:
             guard codexAccentHex != hex else { return }
             codexAccentHex = hex
             defaults.set(hex, forKey: Key.codexAccentHex)
-        } else {
+        case .claude:
             guard claudeAccentHex != hex else { return }
             claudeAccentHex = hex
             defaults.set(hex, forKey: Key.claudeAccentHex)
+        case .kimi:
+            guard kimiAccentHex != hex else { return }
+            kimiAccentHex = hex
+            defaults.set(hex, forKey: Key.kimiAccentHex)
         }
         changed?(.appearance)
+    }
+
+    func accentHex(for provider: ProviderKind) -> String {
+        switch provider {
+        case .codex: return codexAccentHex
+        case .claude: return claudeAccentHex
+        case .kimi: return kimiAccentHex
+        }
     }
 
     private func setAppearanceChoice(

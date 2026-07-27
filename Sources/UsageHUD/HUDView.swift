@@ -68,6 +68,23 @@ struct HUDView: View {
                         showRefreshCountdown: settings.showRefreshCountdown
                     )
                 }
+                if settings.showKimi {
+                    ProviderCard(
+                        kind: .kimi,
+                        state: store.kimi,
+                        compact: false,
+                        notice: nil,
+                        isStale: false,
+                        lastSuccess: store.kimiLastSuccess,
+                        nextRefresh: store.kimiNextRefresh,
+                        accent: Color(hudHex: settings.kimiAccentHex),
+                        barThickness: settings.barThickness,
+                        cornerRadius: settings.cornerRadius,
+                        textScale: settings.textScale,
+                        showResetCountdown: settings.showResetCountdown,
+                        showRefreshCountdown: settings.showRefreshCountdown
+                    )
+                }
             }
         }
         .padding(14)
@@ -116,6 +133,21 @@ struct HUDView: View {
                         lastSuccess: store.claudeLastSuccess,
                         nextRefresh: store.claudeNextRefresh,
                         accent: Color(hudHex: settings.claudeAccentHex),
+                        barThickness: settings.barThickness,
+                        cornerRadius: settings.cornerRadius,
+                        textScale: settings.textScale,
+                        showResetCountdown: settings.showResetCountdown
+                    )
+                }
+                if settings.showKimi {
+                    CompactUsageStrip(
+                        kind: .kimi,
+                        state: store.kimi,
+                        notice: nil,
+                        isStale: false,
+                        lastSuccess: store.kimiLastSuccess,
+                        nextRefresh: store.kimiNextRefresh,
+                        accent: Color(hudHex: settings.kimiAccentHex),
                         barThickness: settings.barThickness,
                         cornerRadius: settings.cornerRadius,
                         textScale: settings.textScale,
@@ -171,9 +203,10 @@ struct HUDView: View {
     private var statusColor: Color {
         if settings.showCodex, store.codex.usage != nil { return Color(hudHex: settings.codexAccentHex) }
         if settings.showClaude, store.claude.usage != nil { return Color(hudHex: settings.claudeAccentHex) }
-        return settings.showCodex
-            ? Color(hudHex: settings.codexAccentHex)
-            : Color(hudHex: settings.claudeAccentHex)
+        if settings.showKimi, store.kimi.usage != nil { return Color(hudHex: settings.kimiAccentHex) }
+        if settings.showCodex { return Color(hudHex: settings.codexAccentHex) }
+        if settings.showClaude { return Color(hudHex: settings.claudeAccentHex) }
+        return Color(hudHex: settings.kimiAccentHex)
     }
 }
 
@@ -205,6 +238,17 @@ private struct CompactRefreshRail: View {
                                 "A",
                                 date: store.claudeNextRefresh,
                                 color: Color(hudHex: settings.claudeAccentHex),
+                                now: context.date
+                            )
+                        }
+                        if settings.showKimi, settings.showCodex || settings.showClaude {
+                            Text("·").foregroundStyle(HUDPalette.muted)
+                        }
+                        if settings.showKimi {
+                            timer(
+                                "K",
+                                date: store.kimiNextRefresh,
+                                color: Color(hudHex: settings.kimiAccentHex),
                                 now: context.date
                             )
                         }

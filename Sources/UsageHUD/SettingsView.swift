@@ -5,6 +5,7 @@ private enum SettingsPalette {
     static let panel = Color(red: 0.085, green: 0.098, blue: 0.11)
     static let codex = Color(red: 0.33, green: 0.91, blue: 0.73)
     static let claude = Color(red: 0.96, green: 0.58, blue: 0.39)
+    static let kimi = Color(red: 0.65, green: 0.55, blue: 0.98)
     static let muted = Color.white.opacity(0.5)
 }
 
@@ -82,6 +83,13 @@ struct SettingsView: View {
                     selected: settings.claudePollingInterval,
                     select: { settings.setClaudePollingInterval($0) }
                 )
+                cadenceRow(
+                    label: "KIMI",
+                    tint: SettingsPalette.kimi,
+                    choices: AppSettings.kimiPollingChoices,
+                    selected: settings.kimiPollingInterval,
+                    select: { settings.setKimiPollingInterval($0) }
+                )
                 Divider().overlay(Color.white.opacity(0.08))
                 HStack {
                     SettingLabel(
@@ -145,6 +153,7 @@ struct SettingsView: View {
                 HStack(spacing: 18) {
                     providerToggle(.codex, isOn: settings.showCodex, accent: SettingsPalette.codex)
                     providerToggle(.claude, isOn: settings.showClaude, accent: SettingsPalette.claude)
+                    providerToggle(.kimi, isOn: settings.showKimi, accent: SettingsPalette.kimi)
                 }
 
                 Divider().overlay(Color.white.opacity(0.08))
@@ -166,7 +175,7 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    SettingLabel(title: "MENU BAR USAGE", detail: "Show C72 · A39 beside the gauge")
+                    SettingLabel(title: "MENU BAR USAGE", detail: "Show C72 · A39 · K84 beside the gauge")
                     Spacer()
                     InstrumentToggle(isOn: settings.showMenuBarUsage, tint: SettingsPalette.codex) {
                         settings.setShowMenuBarUsage(!settings.showMenuBarUsage)
@@ -266,6 +275,7 @@ struct SettingsView: View {
 
                 accentRow(provider: .codex, selected: settings.codexAccentHex)
                 accentRow(provider: .claude, selected: settings.claudeAccentHex)
+                accentRow(provider: .kimi, selected: settings.kimiAccentHex)
             }
         }
     }
@@ -322,6 +332,8 @@ struct SettingsView: View {
                     alertThresholdRow(provider: .codex, slot: .secondary, accent: SettingsPalette.codex)
                     alertThresholdRow(provider: .claude, slot: .primary, accent: SettingsPalette.claude)
                     alertThresholdRow(provider: .claude, slot: .secondary, accent: SettingsPalette.claude)
+                    alertThresholdRow(provider: .kimi, slot: .primary, accent: SettingsPalette.kimi)
+                    alertThresholdRow(provider: .kimi, slot: .secondary, accent: SettingsPalette.kimi)
                 }
             }
         }
