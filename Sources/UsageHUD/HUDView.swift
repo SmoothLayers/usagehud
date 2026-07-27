@@ -259,16 +259,19 @@ private struct CompactRefreshRail: View {
             }
             Spacer(minLength: 8)
             Button(action: store.refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .rotationEffect(.degrees(store.isRefreshing && !reduceMotion ? 180 : 0))
-                    .animation(
-                        store.isRefreshing && !reduceMotion
-                            ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                            : .easeOut(duration: 0.2),
-                        value: store.isRefreshing
-                    )
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+                ZStack {
+                    Image(systemName: "arrow.clockwise")
+                        .rotationEffect(.degrees(store.isRefreshing && !reduceMotion ? 180 : 0))
+                        .animation(
+                            store.isRefreshing && !reduceMotion
+                                ? .linear(duration: 0.8).repeatForever(autoreverses: false)
+                                : .easeOut(duration: 0.2),
+                            value: store.isRefreshing
+                        )
+                }
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+                .clipped()
             }
             .buttonStyle(.plain)
             .help("Refresh now")
