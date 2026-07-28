@@ -3,12 +3,14 @@ import SwiftUI
 struct SetupEnvironmentStatus: Equatable {
     let codexPath: String?
     let claudePath: String?
+    let kimiPath: String?
 
     static func detect() async -> SetupEnvironmentStatus {
         await Task.detached(priority: .utility) {
             SetupEnvironmentStatus(
                 codexPath: ExecutableLocator.find("codex"),
-                claudePath: ExecutableLocator.find("claude")
+                claudePath: ExecutableLocator.find("claude"),
+                kimiPath: ExecutableLocator.find("kimi")
             )
         }.value
     }
@@ -75,6 +77,7 @@ struct FirstRunSetupView: View {
             VStack(spacing: 10) {
                 toolStatus(.codex, path: environment?.codexPath)
                 toolStatus(.claude, path: environment?.claudePath)
+                toolStatus(.kimi, path: environment?.kimiPath)
                 if environment == nil {
                     ProgressView("Scanning local tools…")
                         .controlSize(.small)
@@ -91,6 +94,7 @@ struct FirstRunSetupView: View {
                 HStack(spacing: 10) {
                     providerChoice(.codex, installed: environment?.codexPath != nil)
                     providerChoice(.claude, installed: environment?.claudePath != nil)
+                    providerChoice(.kimi, installed: environment?.kimiPath != nil)
                 }
                 HStack(spacing: 10) {
                     layoutChoice(title: "EXPANDED", systemImage: "rectangle.split.2x1", compact: false)
@@ -153,7 +157,7 @@ struct FirstRunSetupView: View {
     private func toolStatus(_ provider: ProviderKind, path: String?) -> some View {
         HStack(spacing: 12) {
             Image(systemName: environment == nil ? "ellipsis.circle" : (path == nil ? "xmark.circle.fill" : "checkmark.circle.fill"))
-                .foregroundStyle(path == nil ? Color.orange : Color(hudHex: provider == .codex ? settings.codexAccentHex : settings.claudeAccentHex))
+                .foregroundStyle(path == nil ? Color.orange : Color(hudHex: settings.accentHex(for: provider)))
             VStack(alignment: .leading, spacing: 3) {
                 Text(provider.displayName + " CLI")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -169,8 +173,8 @@ struct FirstRunSetupView: View {
     }
 
     private func providerChoice(_ provider: ProviderKind, installed: Bool) -> some View {
-        let selected = provider == .codex ? settings.showCodex : settings.showClaude
-        let accent = Color(hudHex: provider == .codex ? settings.codexAccentHex : settings.claudeAccentHex)
+        let selected = settings.isProviderVisible(provider)
+        let accent = Color(hudHex: settings.accentHex(for: provider))
         return Button { settings.setProvider(provider, visible: !selected) } label: {
             HStack {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")

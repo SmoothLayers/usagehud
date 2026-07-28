@@ -2,7 +2,7 @@
 
 # Usage HUD
 
-**A tiny, private macOS heads-up display for your Codex and Claude subscription limits.**
+**A tiny, private macOS heads-up display for your Codex, Claude, and Kimi subscription limits.**
 
 Always know how much of your 5-hour and weekly usage windows is left —
 at a glance, without leaving your editor or asking the CLI.
@@ -19,13 +19,13 @@ at a glance, without leaving your editor or asking the CLI.
 
 ## What is this?
 
-If you code with **Codex CLI** and **Claude Code** on subscription plans, your usage is metered
+If you code with **Codex CLI**, **Claude Code**, or **Kimi Code** on subscription plans, your usage is metered
 in rolling windows (a short 5-hour window plus a weekly one) — and the only way to check them is
-to ask each tool individually. Usage HUD puts both meters in one small, always-available panel:
+to ask each tool individually. Usage HUD puts the meters in one small, always-available panel:
 
 - **Remaining percentage** for each provider's current window, with a live countdown to the next reset
 - **Weekly window** remaining at a glance
-- A **menu bar readout** (optional) like `C72 · A39`, so you don't even need the panel open
+- A **menu bar readout** (optional) like `C72 · A39 · K84`, so you don't even need the panel open
 - **Local notifications** when you're running low and when a window resets
 
 Everything runs on your Mac. There is no server, no account, no analytics, and no separate API key —
@@ -44,9 +44,9 @@ it reuses the CLI sign-ins you already have.
 3. This personal build is ad-hoc signed but not Apple-notarized, so on first launch
    control-click the app and choose **Open** (or allow it under *System Settings → Privacy & Security*)
 
-A three-step setup assistant checks for the Codex and Claude CLIs, lets you pick providers and a
+A three-step setup assistant checks for the Codex, Claude, and Kimi CLIs, lets you pick providers and a
 layout, and optionally enables notifications. Requires **macOS 14+** on **Apple silicon**, with
-`codex` and/or `claude` installed and signed in.
+at least one supported CLI installed and signed in.
 
 > The first Claude refresh may trigger a macOS Keychain prompt — choose **Always Allow** so the
 > HUD can refresh in the background.
@@ -57,13 +57,17 @@ layout, and optionally enables notifications. Requires **macOS 14+** on **Apple 
 |----------|--------|
 | **Codex** | Your installed `codex` CLI's `app-server` interface (`account/rateLimits/read`) |
 | **Claude** | Your existing Claude Code sign-in from its scoped Keychain item, legacy Keychain item, or credentials file, sent only to Anthropic's own usage endpoint |
+| **Kimi** | Your existing Kimi Code sign-in from `~/.kimi-code/credentials/kimi-code.json`, refreshed through Kimi's OAuth endpoint and sent only to Kimi's coding usage endpoint |
+
+Kimi is initially hidden for existing installations so an update does not add an error card for
+people who do not use it. After signing in with `kimi`, enable **Kimi** under *Settings → Display*.
 
 **Privacy:** credentials never leave your Mac except inside each provider's own authenticated
 request. Usage HUD does not store or log tokens. Diagnostic logs stay local
 (`~/Library/Application Support/Usage HUD/usage-hud.log`, rotated at 1 MB, never containing
 credentials or response bodies) and can be opened from *Settings → Maintenance*.
 
-**Polling:** each provider refreshes independently (Codex every 2 minutes and Claude every 5
+**Polling:** each provider refreshes independently (Codex every 2 minutes; Claude and Kimi every 5
 minutes by default), so one provider can never delay the other. Hidden providers aren't polled.
 If Claude rate-limits the usage endpoint, the HUD honors the `Retry-After` header (with a
 conservative fallback backoff), keeps the last good reading visible with a **STALE** marker, and
@@ -87,7 +91,7 @@ lines are left untouched. Turning the option off restores the original `ccstatus
 
 ## Compact mode
 
-Choose a narrow vertical stack or place both providers side by side:
+Choose a narrow vertical stack or place enabled providers side by side:
 
 <div align="center">
 <p><strong>Vertical</strong></p>
@@ -114,7 +118,7 @@ or use **Check Now** in Settings).
 
 ## Build from source
 
-Both `codex` and `claude` should already be signed in.
+At least one of `codex`, `claude`, or `kimi` should already be signed in.
 
 ```sh
 ./scripts/build-app.sh
@@ -127,8 +131,8 @@ Run the tests with `swift test`.
 
 | Symptom | Fix |
 |---------|-----|
-| CLI not found | Install `codex` / `claude`. Homebrew, `~/.local/bin`, NVM, and login-shell `PATH` setups are detected automatically |
-| "Sign in" message | Run `codex login` or `claude auth login`, then **Refresh Now** from the menu bar |
+| CLI not found | Install `codex`, `claude`, or `kimi`. Homebrew, `~/.local/bin`, NVM, and login-shell `PATH` setups are detected automatically |
+| "Sign in" message | Run `codex login`, `claude auth login`, or `kimi`, then **Refresh Now** from the menu bar |
 | Claude login expired | Open Claude Code once and complete its login flow |
 | Unexpected refresh behavior | *Settings → Maintenance → Open Logs* shows every refresh, HTTP status, `Retry-After` value, and backoff decision |
 

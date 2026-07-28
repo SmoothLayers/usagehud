@@ -68,6 +68,23 @@ struct HUDView: View {
                         showRefreshCountdown: settings.showRefreshCountdown
                     )
                 }
+                if settings.showKimi {
+                    ProviderCard(
+                        kind: .kimi,
+                        state: store.kimi,
+                        compact: false,
+                        notice: store.kimiNotice,
+                        isStale: store.kimiIsStale,
+                        lastSuccess: store.kimiLastSuccess,
+                        nextRefresh: store.kimiNextRefresh,
+                        accent: Color(hudHex: settings.kimiAccentHex),
+                        barThickness: settings.barThickness,
+                        cornerRadius: settings.cornerRadius,
+                        textScale: settings.textScale,
+                        showResetCountdown: settings.showResetCountdown,
+                        showRefreshCountdown: settings.showRefreshCountdown
+                    )
+                }
             }
         }
         .padding(14)
@@ -116,6 +133,21 @@ struct HUDView: View {
                         lastSuccess: store.claudeLastSuccess,
                         nextRefresh: store.claudeNextRefresh,
                         accent: Color(hudHex: settings.claudeAccentHex),
+                        barThickness: settings.barThickness,
+                        cornerRadius: settings.cornerRadius,
+                        textScale: settings.textScale,
+                        showResetCountdown: settings.showResetCountdown
+                    )
+                }
+                if settings.showKimi {
+                    CompactUsageStrip(
+                        kind: .kimi,
+                        state: store.kimi,
+                        notice: store.kimiNotice,
+                        isStale: store.kimiIsStale,
+                        lastSuccess: store.kimiLastSuccess,
+                        nextRefresh: store.kimiNextRefresh,
+                        accent: Color(hudHex: settings.kimiAccentHex),
                         barThickness: settings.barThickness,
                         cornerRadius: settings.cornerRadius,
                         textScale: settings.textScale,
@@ -171,9 +203,10 @@ struct HUDView: View {
     private var statusColor: Color {
         if settings.showCodex, store.codex.usage != nil { return Color(hudHex: settings.codexAccentHex) }
         if settings.showClaude, store.claude.usage != nil { return Color(hudHex: settings.claudeAccentHex) }
-        return settings.showCodex
-            ? Color(hudHex: settings.codexAccentHex)
-            : Color(hudHex: settings.claudeAccentHex)
+        if settings.showKimi, store.kimi.usage != nil { return Color(hudHex: settings.kimiAccentHex) }
+        if settings.showCodex { return Color(hudHex: settings.codexAccentHex) }
+        if settings.showClaude { return Color(hudHex: settings.claudeAccentHex) }
+        return Color(hudHex: settings.kimiAccentHex)
     }
 }
 
@@ -208,6 +241,17 @@ private struct CompactRefreshRail: View {
                                 now: context.date
                             )
                         }
+                        if settings.showKimi, settings.showCodex || settings.showClaude {
+                            Text("·").foregroundStyle(HUDPalette.muted)
+                        }
+                        if settings.showKimi {
+                            timer(
+                                "K",
+                                date: store.kimiNextRefresh,
+                                color: Color(hudHex: settings.kimiAccentHex),
+                                now: context.date
+                            )
+                        }
                     }
                     .font(.system(size: 7 * settings.textScale, weight: .bold, design: .monospaced))
                     .foregroundStyle(HUDPalette.muted)
@@ -215,16 +259,19 @@ private struct CompactRefreshRail: View {
             }
             Spacer(minLength: 8)
             Button(action: store.refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .rotationEffect(.degrees(store.isRefreshing && !reduceMotion ? 180 : 0))
-                    .animation(
-                        store.isRefreshing && !reduceMotion
-                            ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                            : .easeOut(duration: 0.2),
-                        value: store.isRefreshing
-                    )
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+                ZStack {
+                    Image(systemName: "arrow.clockwise")
+                        .rotationEffect(.degrees(store.isRefreshing && !reduceMotion ? 180 : 0))
+                        .animation(
+                            store.isRefreshing && !reduceMotion
+                                ? .linear(duration: 0.8).repeatForever(autoreverses: false)
+                                : .easeOut(duration: 0.2),
+                            value: store.isRefreshing
+                        )
+                }
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+                .clipped()
             }
             .buttonStyle(.plain)
             .help("Refresh now")

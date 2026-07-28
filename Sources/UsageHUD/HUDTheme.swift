@@ -9,6 +9,7 @@ enum HUDAccentPalette {
     static let choices = ["54E8BA", "63C5FF", "A78BFA", "F6C85F", "F59363", "FF6B81"]
     static let codexDefault = "54E8BA"
     static let claudeDefault = "F59363"
+    static let kimiDefault = "A78BFA"
 }
 
 extension Color {

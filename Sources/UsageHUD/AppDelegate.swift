@@ -36,26 +36,29 @@ enum WindowSizing {
 
     static func defaultSize(compact: Bool, visibleProviderCount: Int, layout: CompactLayout = .vertical) -> NSSize {
         if compact, layout == .horizontal, visibleProviderCount > 1 {
-            return NSSize(width: 650, height: 96)
+            return NSSize(width: 325 * CGFloat(visibleProviderCount), height: 96)
         }
         return NSSize(
-            width: compact ? 350 : 430,
-            height: compact && visibleProviderCount == 1 ? 96 : (compact ? 170 : 270)
+            width: compact ? 350 : (visibleProviderCount > 2 ? 630 : 430),
+            height: compact ? 96 + 74 * CGFloat(max(0, visibleProviderCount - 1)) : 270
         )
     }
 
     static func minimumSize(compact: Bool, visibleProviderCount: Int, layout: CompactLayout = .vertical) -> NSSize {
         if compact, layout == .horizontal, visibleProviderCount > 1 {
-            return NSSize(width: 560, height: 88)
+            return NSSize(width: 280 * CGFloat(visibleProviderCount), height: 88)
         }
         return NSSize(
-            width: compact ? 280 : 360,
-            height: compact && visibleProviderCount == 1 ? 88 : (compact ? 156 : 240)
+            width: compact ? 280 : (visibleProviderCount > 2 ? 540 : 360),
+            height: compact ? 88 + 68 * CGFloat(max(0, visibleProviderCount - 1)) : 240
         )
     }
 
-    static func maximumSize(compact: Bool) -> NSSize {
-        compact ? NSSize(width: 760, height: 420) : NSSize(width: 1_000, height: 760)
+    static func maximumSize(compact: Bool, visibleProviderCount: Int = 2) -> NSSize {
+        if compact, visibleProviderCount > 2 {
+            return NSSize(width: 1_100, height: 600)
+        }
+        return compact ? NSSize(width: 760, height: 420) : NSSize(width: 1_000, height: 760)
     }
 
     static func savedSize(
@@ -100,7 +103,7 @@ enum WindowSizing {
             visibleProviderCount: visibleProviderCount,
             layout: layout
         )
-        let maximum = maximumSize(compact: compact)
+        let maximum = maximumSize(compact: compact, visibleProviderCount: visibleProviderCount)
         return NSSize(
             width: min(maximum.width, max(minimum.width, size.width)),
             height: min(maximum.height, max(minimum.height, size.height))
@@ -339,7 +342,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 claude: store.claude,
                 showCodex: settings.showCodex,
                 showClaude: settings.showClaude,
-                claudeStale: store.claudeIsStale
+                kimi: store.kimi,
+                showKimi: settings.showKimi,
+                claudeStale: store.claudeIsStale,
+                kimiStale: store.kimiIsStale
             )
             statusItem.button?.imagePosition = .imageLeading
         } else {
@@ -416,7 +422,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configurePanelSizeLimits(compact: Bool) {
         panel?.minSize = effectiveMinimumSize(compact: compact)
-        let designMaximum = WindowSizing.maximumSize(compact: compact)
+        let designMaximum = WindowSizing.maximumSize(
+            compact: compact,
+            visibleProviderCount: settings.visibleProviderCount
+        )
         if let visible = panel?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
             panel?.maxSize = NSSize(
                 width: max(panel.minSize.width, min(designMaximum.width, visible.width)),
