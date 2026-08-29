@@ -26,6 +26,7 @@ to ask each tool individually. Usage HUD puts the meters in one small, always-av
 - **Remaining percentage** for each provider's current window, with a live countdown to the next reset
 - **Weekly window** remaining at a glance
 - A **menu bar readout** (optional) like `C72 · A39 · K84`, so you don't even need the panel open
+- **Notch mode** (optional): point at the notch and a shelf of provider rings drops out of it
 - **Local notifications** when you're running low and when a window resets
 
 Everything runs on your Mac. There is no server, no account, no analytics, and no separate API key —
@@ -88,6 +89,20 @@ lines are left untouched. Turning the option off restores the original `ccstatus
 - **Always on Top** keeps the HUD above other windows (including full-screen apps) — turn it off to pin the HUD to the desktop behind normal app windows
 - **Lock HUD** pins it in place; **Click Through** passes mouse input to whatever is underneath
 - Hide it anytime — the **gauge icon in the menu bar** brings it back, and repairs the window if it ever ends up off-screen
+
+## Notch mode
+
+Turn on **Notch Mode** (menu bar menu, or Settings › Display) and the HUD gets a second home: point
+at the camera housing and a shelf slides out from under it with a progress ring per provider, its
+mark in the middle and the remaining percentage below. Move away and it retracts. Click any ring to
+bring the full HUD forward, or hover one for its reset countdown.
+
+- Nothing is drawn while it is retracted, and it ignores the pointer, so the menu bar behaves normally
+- Macs without a notch get the same shelf from a hot zone at the top centre of the screen, marked by a
+  hairline of provider colour
+- It follows the pointer across displays and re-measures when you rearrange them
+- **Reduce Motion** swaps the drop animation for a plain cut
+- On macOS 26 and later the tray is Liquid Glass; older versions get a flat black panel
 
 ## Compact mode
 

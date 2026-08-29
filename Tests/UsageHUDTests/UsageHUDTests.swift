@@ -1253,4 +1253,183 @@ final class UsageHUDTests: XCTestCase {
             )
         )
     }
+
+    // MARK: - Notch mode
+
+    private var notchedScreenFrame: CGRect { CGRect(x: 0, y: 0, width: 1_512, height: 982) }
+
+    private func hardwareNotch() -> NotchGeometry.Notch {
+        NotchGeometry.notch(
+            screenFrame: notchedScreenFrame,
+            safeAreaTop: 38,
+            auxiliaryLeftWidth: 656,
+            auxiliaryRightWidth: 656,
+            menuBarHeight: 38
+        )
+    }
+
+    func testNotchIsDerivedFromTheGapBetweenTheAuxiliaryMenuBarAreas() {
+        let notch = hardwareNotch()
+
+        XCTAssertTrue(notch.isHardware)
+        XCTAssertEqual(notch.rect, CGRect(x: 656, y: 944, width: 200, height: 38))
+    }
+
+    func testDisplaysWithoutACameraHousingGetACentredStandIn() {
+        let notch = NotchGeometry.notch(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            safeAreaTop: 0,
+            auxiliaryLeftWidth: nil,
+            auxiliaryRightWidth: nil,
+            menuBarHeight: 24
+        )
+
+        XCTAssertFalse(notch.isHardware)
+        XCTAssertEqual(notch.rect, CGRect(x: 860, y: 1_056, width: 200, height: 24))
+    }
+
+    func testStandInNotchFallsBackToADefaultMenuBarHeight() {
+        let notch = NotchGeometry.notch(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            safeAreaTop: 0,
+            auxiliaryLeftWidth: nil,
+            auxiliaryRightWidth: nil,
+            menuBarHeight: 0
+        )
+
+        XCTAssertEqual(notch.rect.height, NotchGeometry.fallbackMenuBarHeight)
+        XCTAssertEqual(notch.rect.maxY, 900)
+    }
+
+    func testSecondDisplayNotchIsPlacedInThatDisplaysOwnCoordinates() {
+        let notch = NotchGeometry.notch(
+            screenFrame: CGRect(x: 1_512, y: 0, width: 1_920, height: 1_080),
+            safeAreaTop: 0,
+            auxiliaryLeftWidth: nil,
+            auxiliaryRightWidth: nil,
+            menuBarHeight: 24
+        )
+
+        XCTAssertEqual(notch.rect.midX, 2_472)
+        XCTAssertEqual(notch.rect.maxY, 1_080)
+    }
+
+    func testShelfHangsFromTheTopOfTheScreenAndIsCentredOnTheNotch() {
+        let notch = hardwareNotch()
+        let bounds = NotchGeometry.shelfBounds(notch: notch, providerCount: 3)
+
+        XCTAssertEqual(bounds.maxY, notchedScreenFrame.maxY)
+        XCTAssertEqual(bounds.midX, notch.rect.midX)
+        XCTAssertEqual(bounds.height, notch.rect.height + NotchGeometry.trayHeight)
+    }
+
+    func testExpandedWidthIsTheSameWhateverIsOnShow() {
+        let notch = hardwareNotch()
+        let widths = (1...3).map { NotchGeometry.expandedWidth(notch: notch, providerCount: $0) }
+
+        // Opening the detail must not make the panel breathe sideways, so one
+        // width has to cover every state.
+        XCTAssertEqual(Set(widths).count, 1)
+        XCTAssertGreaterThanOrEqual(widths[0], NotchGeometry.minimumExpandedWidth)
+        XCTAssertGreaterThanOrEqual(widths[0], notch.width)
+    }
+
+    func testExpandedWidthGrowsOnceTheRingsWouldNotFit() {
+        let notch = hardwareNotch()
+        let roomy = NotchGeometry.expandedWidth(notch: notch, providerCount: 8)
+        let content = NotchGeometry.trayHorizontalPadding * 2
+            + NotchGeometry.tileWidth * 8
+            + NotchGeometry.tileSpacing * 7
+
+        XCTAssertEqual(roomy, content)
+        XCTAssertGreaterThan(roomy, NotchGeometry.minimumExpandedWidth)
+    }
+
+    func testDetailGrowsWithTheNumberOfUsageWindows() {
+        let one = NotchGeometry.detailHeight(windowCount: 1)
+        let two = NotchGeometry.detailHeight(windowCount: 2)
+
+        XCTAssertLessThan(one, two)
+        XCTAssertEqual(two - one, NotchGeometry.detailRowHeight + NotchGeometry.detailSpacing)
+        // A provider reporting nothing still has to leave a drawable section.
+        XCTAssertEqual(NotchGeometry.detailHeight(windowCount: 0), one)
+    }
+
+    func testPanelIsSizedForTheTallestStateAndStaysFlushWithTheScreenTop() {
+        let notch = hardwareNotch()
+        let bounds = NotchGeometry.shelfBounds(notch: notch, providerCount: 3)
+        let frame = NotchGeometry.panelFrame(notch: notch, providerCount: 3)
+
+        // Nothing is cast onto the screen edge, so the top gets no padding.
+        XCTAssertEqual(frame.maxY, bounds.maxY)
+        XCTAssertEqual(frame.maxY, notchedScreenFrame.maxY)
+        XCTAssertEqual(frame.midX, bounds.midX)
+        // The window never resizes, so it has to already fit the open detail.
+        XCTAssertGreaterThanOrEqual(
+            frame.height,
+            bounds.height + NotchGeometry.detailHeight(windowCount: 2)
+        )
+        XCTAssertEqual(frame.width, bounds.width + NotchGeometry.shadowPadding * 2)
+    }
+
+    func testHotZoneCoversTheNotchAndAShortRunBelowIt() {
+        let notch = hardwareNotch()
+        let zone = NotchGeometry.hotZone(notch: notch)
+
+        XCTAssertTrue(zone.contains(CGPoint(x: notch.rect.midX, y: notch.rect.midY)))
+        // Just under the notch still counts, so a fast downward flick lands.
+        XCTAssertTrue(zone.contains(CGPoint(x: notch.rect.midX, y: notch.rect.minY - 1)))
+        XCTAssertFalse(zone.contains(CGPoint(x: notch.rect.midX, y: notch.rect.minY - 8)))
+        XCTAssertFalse(zone.contains(CGPoint(x: notch.rect.minX - 20, y: notch.rect.midY)))
+    }
+
+    func testHotZoneCatchesACursorParkedOnTheVeryTopEdgeOfTheScreen() {
+        let notch = hardwareNotch()
+        let zone = NotchGeometry.hotZone(notch: notch)
+
+        // Throwing the pointer at the notch parks it on the screen edge, which
+        // is the notch's maxY — and CGRect.contains excludes maxY.
+        XCTAssertEqual(notch.rect.maxY, notchedScreenFrame.maxY)
+        XCTAssertTrue(zone.contains(CGPoint(x: notch.rect.midX, y: notchedScreenFrame.maxY)))
+        XCTAssertGreaterThan(zone.maxY, notchedScreenFrame.maxY)
+    }
+
+    func testStayZoneForgivesAShakyHandJustOutsideTheTray() {
+        let bounds = NotchGeometry.shelfBounds(notch: hardwareNotch(), providerCount: 3)
+        let zone = NotchGeometry.stayZone(shelfBounds: bounds)
+
+        XCTAssertTrue(zone.contains(CGPoint(x: bounds.minX - 5, y: bounds.minY - 5)))
+        XCTAssertFalse(zone.contains(CGPoint(x: bounds.minX - 20, y: bounds.midY)))
+        // Sideways slack stays tight so the tray is not sticky.
+        XCTAssertEqual(zone.width, bounds.width + NotchGeometry.stayZoneSlack * 2)
+    }
+
+    func testStayZoneReachesDownOverTheOpenDetail() {
+        let bounds = NotchGeometry.shelfBounds(notch: hardwareNotch(), providerCount: 3)
+        let zone = NotchGeometry.stayZone(shelfBounds: bounds)
+        let detailDepth = NotchGeometry.detailHeight(windowCount: 2)
+
+        // The shelf only measures the ring row, so the zone has to reach over
+        // the detail the rings open — otherwise reading it retracts it.
+        XCTAssertTrue(zone.contains(CGPoint(x: bounds.midX, y: bounds.minY - detailDepth / 2)))
+        XCTAssertFalse(zone.contains(CGPoint(x: bounds.midX, y: bounds.minY - detailDepth - 40)))
+    }
+
+    func testNotchModeIsOffUntilItIsTurnedOn() throws {
+        let suiteName = "UsageHUDTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertFalse(settings.notchModeEnabled)
+
+        var changes: [AppSettingsChange] = []
+        settings.changed = { changes.append($0) }
+        settings.setNotchModeEnabled(true)
+        settings.setNotchModeEnabled(true)
+
+        XCTAssertTrue(settings.notchModeEnabled)
+        XCTAssertEqual(changes.count, 1)
+        XCTAssertTrue(AppSettings(defaults: defaults).notchModeEnabled)
+    }
 }

@@ -13,7 +13,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macOS 26 SDK: needed for Liquid Glass, which compiles to a flat-black
+    # fallback on any older SDK. The deployment target stays macOS 14.
+    runs-on: macos-26
     steps:
       - name: Check out source
         uses: actions/checkout@v5
