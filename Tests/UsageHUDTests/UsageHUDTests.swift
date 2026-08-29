@@ -517,6 +517,54 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertNil(ClaudeCredentials.parse(Data("{}".utf8), source: .credentialsFile))
     }
 
+    func testClaudeCredentialParsingExtractsRefreshTokenAndScopes() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "claudeAiOauth": [
+                "accessToken": "local-test-token",
+                "refreshToken": "local-refresh-token",
+                "scopes": ["user:profile", "user:inference"],
+            ],
+        ])
+        let credential = try XCTUnwrap(ClaudeCredentials.parse(data, source: .scopedKeychain))
+        XCTAssertEqual(credential.refreshToken, "local-refresh-token")
+        XCTAssertEqual(credential.scopes, ["user:profile", "user:inference"])
+
+        let stringScopes = try JSONSerialization.data(withJSONObject: [
+            "claudeAiOauth": [
+                "accessToken": "local-test-token",
+                "scopes": "user:profile user:inference",
+            ],
+        ])
+        let parsed = try XCTUnwrap(ClaudeCredentials.parse(stringScopes, source: .credentialsFile))
+        XCTAssertNil(parsed.refreshToken)
+        XCTAssertEqual(parsed.scopes, ["user:profile", "user:inference"])
+    }
+
+    func testClaudeCredentialRepairEnvironmentSetsLoginVariables() {
+        let environment = ClaudeCredentialRepair.loginEnvironment(
+            refreshToken: "local-refresh-token",
+            scopes: ["user:profile", "user:inference"],
+            base: ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/tmp/claude"]
+        )
+        XCTAssertEqual(environment["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"], "local-refresh-token")
+        XCTAssertEqual(environment["CLAUDE_CODE_OAUTH_SCOPES"], "user:profile user:inference")
+        XCTAssertEqual(environment["PATH"], "/usr/bin")
+        XCTAssertEqual(environment["CLAUDE_CONFIG_DIR"], "/tmp/claude")
+    }
+
+    func testClaudeCredentialRepairThrottlesRepeatAttempts() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(ClaudeCredentialRepair.attemptAllowed(lastAttempt: nil, now: now))
+        XCTAssertFalse(ClaudeCredentialRepair.attemptAllowed(
+            lastAttempt: now.addingTimeInterval(-ClaudeCredentialRepair.minimumAttemptInterval + 1),
+            now: now
+        ))
+        XCTAssertTrue(ClaudeCredentialRepair.attemptAllowed(
+            lastAttempt: now.addingTimeInterval(-ClaudeCredentialRepair.minimumAttemptInterval),
+            now: now
+        ))
+    }
+
     func testClaudeLiveUsageParsesSchemaVariantsAndMilliseconds() throws {
         let payload: [String: Any] = [
             "rate_limits": [
