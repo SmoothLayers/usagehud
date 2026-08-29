@@ -175,6 +175,14 @@ struct SettingsView: View {
                 }
 
                 HStack {
+                    SettingLabel(title: "NOTCH MODE", detail: "Point at the notch to drop a provider shelf")
+                    Spacer()
+                    InstrumentToggle(isOn: settings.notchModeEnabled, tint: SettingsPalette.kimi) {
+                        settings.setNotchModeEnabled(!settings.notchModeEnabled)
+                    }
+                }
+
+                HStack {
                     SettingLabel(title: "MENU BAR USAGE", detail: "Show C72 · A39 · K84 beside the gauge")
                     Spacer()
                     InstrumentToggle(isOn: settings.showMenuBarUsage, tint: SettingsPalette.codex) {

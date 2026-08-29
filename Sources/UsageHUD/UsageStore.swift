@@ -233,6 +233,30 @@ final class UsageStore: ObservableObject {
         AppLog.info("claude-live", "Live usage applied remaining=\(Int(merged.primary.remainingPercent.rounded()))%")
     }
 
+    func state(for provider: ProviderKind) -> ProviderState {
+        switch provider {
+        case .codex: return codex
+        case .claude: return claude
+        case .kimi: return kimi
+        }
+    }
+
+    func isStale(for provider: ProviderKind) -> Bool {
+        switch provider {
+        case .codex: return false
+        case .claude: return claudeIsStale
+        case .kimi: return kimiIsStale
+        }
+    }
+
+    func notice(for provider: ProviderKind) -> String? {
+        switch provider {
+        case .codex: return nil
+        case .claude: return claudeNotice
+        case .kimi: return kimiNotice
+        }
+    }
+
     func toggleCompact() {
         isCompact.toggle()
         defaults.set(isCompact, forKey: "isCompact")

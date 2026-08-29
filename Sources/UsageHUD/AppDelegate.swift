@@ -151,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lockHUDItem: NSMenuItem!
     private var clickThroughItem: NSMenuItem!
     private var alwaysOnTopItem: NSMenuItem!
+    private var notchModeItem: NSMenuItem!
     private var isApplyingProgrammaticResize = false
     private var panelUserHidden = false
     private let notificationService = UsageNotificationService()
@@ -162,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let setupCompletedKey = "firstRunSetupCompleted"
     private let claudeStatusLineInstaller = ClaudeStatusLineInstaller()
     private var claudeLiveUsageServer: ClaudeLiveUsageServer?
+    private var notchController: NotchController!
 
     override init() {
         let settings = AppSettings()
@@ -175,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AppLog.info("app", "Usage HUD v\(AppMetadata.version) started")
         NSApp.setActivationPolicy(.accessory)
         createPanel()
+        createNotchController()
         createStatusItem()
         applyInteractionSettings()
         // Reassert the desktop-layer placement after app and Space changes.
@@ -218,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .providers:
                 self.store.applyProviderSettings()
                 self.resizePanel(compact: self.store.isCompact)
+                self.notchController.refreshLayout()
             case .appearance:
                 self.panel.alphaValue = self.settings.hudOpacity
                 self.resizePanel(compact: self.store.isCompact)
@@ -237,12 +241,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.resizePanel(compact: self.store.isCompact)
             case .claudeLiveUsage:
                 self.applyClaudeLiveUsageSetting()
+            case .notch:
+                self.applyNotchModeSetting()
             }
         }
         applyClaudeLiveUsageSetting()
+        applyNotchModeSetting()
         if UserDefaults.standard.bool(forKey: setupCompletedKey) {
             store.start()
-            showPanel()
+            if !settings.notchModeEnabled { showPanel() }
         } else {
             showSetupAssistant(firstRun: true)
         }
@@ -322,6 +329,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clickThroughItem.state = settings.clickThrough ? .on : .off
         alwaysOnTopItem = menu.addItem(withTitle: "Always on Top", action: #selector(toggleAlwaysOnTop), keyEquivalent: "")
         alwaysOnTopItem.state = settings.alwaysOnTop ? .on : .off
+        notchModeItem = menu.addItem(withTitle: "Notch Mode", action: #selector(toggleNotchMode), keyEquivalent: "")
+        notchModeItem.state = settings.notchModeEnabled ? .on : .off
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(.separator())
@@ -352,6 +361,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             statusItem.length = NSStatusItem.squareLength
             statusItem.button?.title = ""
             statusItem.button?.imagePosition = .imageOnly
+        }
+    }
+
+    private func createNotchController() {
+        notchController = NotchController(
+            store: store,
+            settings: settings,
+            openHUD: { [weak self] in self?.showHUD() }
+        )
+    }
+
+    private func applyNotchModeSetting() {
+        notchController.setEnabled(settings.notchModeEnabled)
+        notchModeItem.state = settings.notchModeEnabled ? .on : .off
+        // The notch tray replaces the floating HUD rather than doubling it up.
+        // "Show Usage HUD" still brings the window back on demand.
+        guard panel != nil else { return }
+        if settings.notchModeEnabled {
+            panel.orderOut(nil)
+        } else if !panelUserHidden {
+            panel.orderFrontRegardless()
         }
     }
 
@@ -534,6 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         claudeLiveUsageServer?.stop()
+        notchController.setEnabled(false)
     }
 
     @objc private func workspaceOrderingChanged(_ notification: Notification) {
@@ -585,6 +616,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleAlwaysOnTop() {
         settings.setAlwaysOnTop(!settings.alwaysOnTop)
+    }
+
+    @objc private func toggleNotchMode() {
+        settings.setNotchModeEnabled(!settings.notchModeEnabled)
     }
 
     @objc private func checkForUpdates() {
@@ -703,7 +738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupWindow = nil
         if firstRun { store.start() }
         repairPanelFrame()
-        showPanel()
+        if !settings.notchModeEnabled { showPanel() }
         AppLog.info("setup", "Setup assistant completed firstRun=\(firstRun)")
     }
 
