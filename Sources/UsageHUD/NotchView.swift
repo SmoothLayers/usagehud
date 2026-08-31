@@ -400,8 +400,10 @@ private struct RingColumn: View {
             .animation(reduceMotion ? nil : HUDMotion.value, value: remaining ?? 0)
 
         // A bright droplet riding the leading edge of the arc, so a sweep is
-        // something moving, not just a length changing.
-        if remaining != nil {
+        // something moving, not just a length changing. A full ring has no
+        // leading edge — at 100% the droplet fades out rather than sitting on
+        // the seam where the arc meets its own start.
+        if let remaining {
             Circle()
                 .fill(Color.white.opacity(0.95))
                 .frame(width: 3.5, height: 3.5)
@@ -409,8 +411,8 @@ private struct RingColumn: View {
                 .offset(y: -tipRadius)
                 .rotationEffect(.degrees(fraction * 360))
                 .saturation(status == .stale ? 0.35 : 1)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(reduceMotion ? nil : HUDMotion.value, value: remaining ?? 0)
+                .opacity(hasAppeared && remaining < 100 ? 1 : 0)
+                .animation(reduceMotion ? nil : HUDMotion.value, value: remaining)
         }
     }
 

@@ -24,7 +24,8 @@ final class NotchPreviewRender: XCTestCase {
         store.codex = .loaded(ProviderUsage(
             kind: .codex,
             plan: "Pro",
-            primary: UsageWindow(label: "5h limit", usedPercent: 28, resetsAt: now.addingTimeInterval(9_360)),
+            // A full window, so the droplet's disappearance at 100% is on film.
+            primary: UsageWindow(label: "5h limit", usedPercent: 0, resetsAt: now.addingTimeInterval(9_360)),
             secondary: UsageWindow(label: "Weekly", usedPercent: 41, resetsAt: now.addingTimeInterval(300_000)),
             fetchedAt: now
         ))
