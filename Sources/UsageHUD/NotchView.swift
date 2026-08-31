@@ -387,8 +387,9 @@ private struct RingColumn: View {
     @ViewBuilder
     private var arc: some View {
         let fraction = hasAppeared ? (remaining ?? 0) / 100 : 0
-        // Stroke centreline sits half the line width inside the inset circle.
-        let tipRadius = NotchGeometry.ringDiameter / 2 - Self.arcInset - Self.arcLineWidth / 2
+        // `stroke` straddles the inset circle's path, so its centreline — the
+        // orbit the droplet must ride — is at the inset radius itself.
+        let tipRadius = NotchGeometry.ringDiameter / 2 - Self.arcInset
 
         Circle()
             .inset(by: Self.arcInset)
