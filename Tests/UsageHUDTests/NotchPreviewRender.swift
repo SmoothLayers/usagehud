@@ -1,0 +1,99 @@
+// Design-iteration harness: renders the notch tray states to PNGs so the
+// design can be judged without hovering a real notch. Skipped unless asked:
+//   RENDER_NOTCH_PREVIEWS=1 swift test --filter NotchPreviewRender
+import AppKit
+import SwiftUI
+import XCTest
+@testable import UsageHUD
+
+@MainActor
+final class NotchPreviewRender: XCTestCase {
+    func testRenderPreviews() throws {
+        guard ProcessInfo.processInfo.environment["RENDER_NOTCH_PREVIEWS"] == "1" else {
+            throw XCTSkip("preview rendering not requested")
+        }
+
+        let outputDir = URL(fileURLWithPath: "/tmp/notch-previews", isDirectory: true)
+        try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+        let defaults = UserDefaults(suiteName: "notch-preview-\(UUID().uuidString)")!
+        defaults.set(true, forKey: "showKimi")
+        let settings = AppSettings(defaults: defaults)
+        let store = UsageStore(defaults: defaults, settings: settings)
+        let now = Date()
+        store.codex = .loaded(ProviderUsage(
+            kind: .codex,
+            plan: "Pro",
+            // A full window, so the droplet's disappearance at 100% is on film.
+            primary: UsageWindow(label: "5h limit", usedPercent: 0, resetsAt: now.addingTimeInterval(9_360)),
+            secondary: UsageWindow(label: "Weekly", usedPercent: 41, resetsAt: now.addingTimeInterval(300_000)),
+            fetchedAt: now
+        ))
+        store.claude = .loaded(ProviderUsage(
+            kind: .claude,
+            plan: "Max",
+            primary: UsageWindow(label: "Session", usedPercent: 63, resetsAt: now.addingTimeInterval(4_500)),
+            secondary: UsageWindow(label: "Weekly", usedPercent: 22, resetsAt: now.addingTimeInterval(420_000)),
+            fetchedAt: now
+        ))
+        store.kimi = .loaded(ProviderUsage(
+            kind: .kimi,
+            plan: nil,
+            primary: UsageWindow(label: "Daily", usedPercent: 87, resetsAt: now.addingTimeInterval(52_000)),
+            secondary: nil,
+            fetchedAt: now
+        ))
+
+        let hardwareNotch = CGSize(width: 200, height: 32)
+
+        func render(_ name: String, expanded: Bool, hovered: Int?, hardware: Bool, peeking: Bool = false) {
+            let notch = NotchState()
+            notch.isExpanded = expanded
+            notch.isPeeking = peeking
+            notch.notchSize = hardwareNotch
+            notch.isHardwareNotch = hardware
+            notch.hoveredIndex = hovered
+
+            let metrics = NotchGeometry.Notch(
+                rect: CGRect(origin: .zero, size: hardwareNotch),
+                isHardware: hardware
+            )
+            let width = NotchGeometry.expandedWidth(notch: metrics, providerCount: 3)
+                + NotchGeometry.shadowPadding * 2
+            let height = hardwareNotch.height + NotchGeometry.trayHeight + NotchGeometry.shadowPadding
+
+            let view = ZStack(alignment: .top) {
+                // Stand-in desktop so shadow and rim can be judged.
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.16, green: 0.19, blue: 0.30),
+                        Color(red: 0.42, green: 0.26, blue: 0.35),
+                        Color(red: 0.85, green: 0.51, blue: 0.34),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                NotchShelfView(store: store, settings: settings, notch: notch, openHUD: {})
+            }
+            .frame(width: width, height: height)
+
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            guard let image = renderer.nsImage,
+                  let tiff = image.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let png = rep.representation(using: .png, properties: [:]) else {
+                XCTFail("could not render \(name)")
+                return
+            }
+            try? png.write(to: outputDir.appendingPathComponent("\(name).png"))
+        }
+
+        render("1-collapsed-virtual", expanded: false, hovered: nil, hardware: false)
+        render("2-peek", expanded: false, hovered: nil, hardware: true, peeking: true)
+        render("3-tray", expanded: true, hovered: nil, hardware: true)
+        render("4-detail-claude", expanded: true, hovered: 1, hardware: true)
+        render("5-detail-kimi", expanded: true, hovered: 2, hardware: true)
+        print("previews written to \(outputDir.path)")
+    }
+}

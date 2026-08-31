@@ -14,15 +14,15 @@ enum NotchGeometry {
     static let fallbackMenuBarHeight: CGFloat = 24
 
     // The tray: a row of provider rings hanging under the notch.
-    static let ringDiameter: CGFloat = 38
-    static let percentHeight: CGFloat = 14
-    static let ringToPercentGap: CGFloat = 5
-    static let tileWidth: CGFloat = 54
-    static let tileSpacing: CGFloat = 10
-    static let trayHorizontalPadding: CGFloat = 16
+    static let ringDiameter: CGFloat = 35
+    static let percentHeight: CGFloat = 13
+    static let ringToPercentGap: CGFloat = 6
+    static let tileWidth: CGFloat = 46
+    static let tileSpacing: CGFloat = 6
+    static let trayHorizontalPadding: CGFloat = 14
     static let trayTopPadding: CGFloat = 10
     static let trayBottomPadding: CGFloat = 12
-    static let trayBottomRadius: CGFloat = 26
+    static let trayBottomRadius: CGFloat = 24
     /// Outward flare where the tray meets the screen edge.
     static let trayTopRadius: CGFloat = 11
 
@@ -37,14 +37,15 @@ enum NotchGeometry {
     static let peekWidthGrowth: CGFloat = 14
     static let peekHeightGrowth: CGFloat = 5
     /// A floor so a lone ring still gets a shape wide enough to feel like a
-    /// tray rather than a bump.
-    static let minimumExpandedWidth: CGFloat = 248
+    /// tray rather than a bump. Kept close to the hardware notch width so the
+    /// tray reads as an extension of it rather than a panel parked underneath.
+    static let minimumExpandedWidth: CGFloat = 232
 
     // The detail: hovering swaps the tray's content — the hovered ring glides
     // to the left edge and bars unfold in the space the other rings vacate.
     // The shape itself never resizes once open, so the silhouette is a
     // constant and only the contents are liquid.
-    static let detailTileWidth: CGFloat = 236
+    static let detailTileWidth: CGFloat = 208
     /// Gap between the ring column and the bars that unfold beside it.
     static let detailInnerSpacing: CGFloat = 12
 
