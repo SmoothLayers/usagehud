@@ -9,7 +9,9 @@ import SwiftUI
 /// working, and the pointer is watched through event monitors instead.
 @MainActor
 final class NotchController {
-    private static let expandDelay: TimeInterval = 0.12
+    /// Long enough for the peek to read as its own beat, short enough that the
+    /// tray still feels like it opened on intent.
+    private static let expandDelay: TimeInterval = 0.18
     private static let collapseDelay: TimeInterval = 0.25
     /// Backstop for the cases that produce no mouse-moved events, such as the
     /// pointer leaving via another Space or the display going to sleep.
@@ -66,6 +68,7 @@ final class NotchController {
         cancelExpand()
         cancelCollapse()
         notchState.isExpanded = false
+        notchState.isPeeking = false
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
         monitors.removeAll()
         pollTimer?.invalidate()
@@ -212,9 +215,27 @@ final class NotchController {
             }
         } else {
             if NotchGeometry.hotZone(notch: notch).contains(point) {
+                setPeeking(true)
                 scheduleExpand()
             } else {
+                setPeeking(false)
                 cancelExpand()
+            }
+        }
+    }
+
+    /// The swell while the pointer waits out the expand delay. Paired with a
+    /// haptic tick so trackpad users feel the notch notice them.
+    private func setPeeking(_ peeking: Bool) {
+        guard notchState.isPeeking != peeking else { return }
+        if peeking {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            notchState.isPeeking = peeking
+        } else {
+            withAnimation(peeking ? HUDMotion.peekIn : HUDMotion.peekOut) {
+                notchState.isPeeking = peeking
             }
         }
     }
@@ -266,15 +287,13 @@ final class NotchController {
 
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             notchState.isExpanded = expanded
+            notchState.isPeeking = false
         } else {
-            // Opening gets a looser spring so the tray settles with a little
-            // weight; closing is quicker and critically damped so it gets out
-            // of the way without wobbling.
-            let animation: Animation = expanded
-                ? .spring(response: 0.46, dampingFraction: 0.7)
-                : .spring(response: 0.3, dampingFraction: 0.92)
-            withAnimation(animation) {
+            withAnimation(expanded ? HUDMotion.open : HUDMotion.close) {
                 notchState.isExpanded = expanded
+                // The peek hands over to the open tray inside the same spring
+                // so there is no half-beat snap between the two sizes.
+                notchState.isPeeking = false
             }
         }
     }

@@ -103,6 +103,40 @@ enum ClaudeCooldownPersistence {
     }
 }
 
+/// Remembers when each API-backed provider last started a poll so a relaunch
+/// resumes the cadence instead of firing a fresh startup burst. Codex is a
+/// local CLI call and stays exempt.
+enum ProviderPollPersistence {
+    static func key(for provider: ProviderKind) -> String {
+        switch provider {
+        case .codex: return "codexLastPollAttemptAt"
+        case .claude: return "claudeLastPollAttemptAt"
+        case .kimi: return "kimiLastPollAttemptAt"
+        }
+    }
+
+    static func lastAttempt(for provider: ProviderKind, from defaults: UserDefaults) -> Date? {
+        let timestamp = defaults.double(forKey: key(for: provider))
+        guard timestamp.isFinite, timestamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    static func recordAttempt(for provider: ProviderKind, at date: Date, to defaults: UserDefaults) {
+        defaults.set(date.timeIntervalSince1970, forKey: key(for: provider))
+    }
+
+    /// How long a fresh launch should wait before its first poll: the
+    /// remainder of the polling interval measured from the previous run's last
+    /// attempt. A future timestamp (clock change) waits the full interval so a
+    /// bad clock can never shorten the cadence.
+    static func startupDelay(lastAttempt: Date?, interval: TimeInterval, now: Date) -> TimeInterval {
+        guard let lastAttempt else { return 0 }
+        let elapsed = now.timeIntervalSince(lastAttempt)
+        guard elapsed >= 0 else { return interval }
+        return max(0, interval - elapsed)
+    }
+}
+
 @MainActor
 final class UsageStore: ObservableObject {
     @Published var codex: ProviderState = .loading
@@ -143,7 +177,7 @@ final class UsageStore: ObservableObject {
     private var claudeIsRefreshing = false
     private var kimiIsRefreshing = false
     private var hasStarted = false
-    private var claudeRateLimitedUntil: Date?
+    @Published private(set) var claudeRateLimitedUntil: Date?
     private var claudeBackoffAttempt = 0
 
     init(defaults: UserDefaults = .standard, settings: AppSettings? = nil) {
@@ -162,16 +196,37 @@ final class UsageStore: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
         AppLog.info("scheduler", "Independent polling started codex=\(Int(settings.codexPollingInterval))s claude=\(Int(settings.claudePollingInterval))s kimi=\(Int(settings.kimiPollingInterval))s")
+        let now = Date.now
         if settings.showCodex {
             refreshCodex(trigger: "startup")
             scheduleCodexTimer()
         }
         if settings.showClaude, !restoreClaudeCooldownIfNeeded() {
-            refreshClaude(trigger: "startup")
+            let delay = ProviderPollPersistence.startupDelay(
+                lastAttempt: ProviderPollPersistence.lastAttempt(for: .claude, from: defaults),
+                interval: ClaudePolling.interval(from: settings.claudePollingInterval),
+                now: now
+            )
+            if delay > 0 {
+                AppLog.info("scheduler", "Claude startup poll deferred delaySeconds=\(Int(delay.rounded())) source=persisted-interval")
+                scheduleClaudeTimer(after: delay, trigger: "startup-deferred", source: "persisted-interval")
+            } else {
+                refreshClaude(trigger: "startup")
+            }
         }
         if settings.showKimi {
-            refreshKimi(trigger: "startup")
-            scheduleKimiTimer()
+            let delay = ProviderPollPersistence.startupDelay(
+                lastAttempt: ProviderPollPersistence.lastAttempt(for: .kimi, from: defaults),
+                interval: settings.kimiPollingInterval,
+                now: now
+            )
+            if delay > 0 {
+                AppLog.info("scheduler", "Kimi startup poll deferred delaySeconds=\(Int(delay.rounded())) source=persisted-interval")
+                scheduleDeferredKimiStart(after: delay)
+            } else {
+                refreshKimi(trigger: "startup")
+                scheduleKimiTimer()
+            }
         }
     }
 
@@ -247,6 +302,15 @@ final class UsageStore: ObservableObject {
         case .claude: return claudeIsStale
         case .kimi: return kimiIsStale
         }
+    }
+
+    func visualStatus(for provider: ProviderKind, now: Date = .now) -> ProviderVisualStatus {
+        ProviderVisualStatus.status(
+            state: state(for: provider),
+            isStale: isStale(for: provider),
+            cooldownUntil: provider == .claude ? claudeRateLimitedUntil : nil,
+            now: now
+        )
     }
 
     func notice(for provider: ProviderKind) -> String? {
@@ -400,6 +464,22 @@ final class UsageStore: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    /// One-shot bridge for a deferred launch: fires the held-back startup poll
+    /// and only then hands over to the ordinary repeating timer.
+    private func scheduleDeferredKimiStart(after delay: TimeInterval) {
+        kimiTimer?.invalidate()
+        kimiNextRefresh = Date.now.addingTimeInterval(delay)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.refreshKimi(trigger: "startup-deferred")
+                self.scheduleKimiTimer()
+            }
+        }
+        kimiTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     private func refreshKimi(trigger: String) {
         guard settings.showKimi else {
             AppLog.info("scheduler", "Kimi refresh skipped trigger=\(trigger) reason=hidden")
@@ -411,6 +491,7 @@ final class UsageStore: ObservableObject {
         }
 
         kimiIsRefreshing = true
+        ProviderPollPersistence.recordAttempt(for: .kimi, at: .now, to: defaults)
         updateRefreshingState()
         AppLog.info("scheduler", "Kimi refresh started trigger=\(trigger)")
         kimiRefreshTask = Task {
@@ -491,6 +572,7 @@ final class UsageStore: ObservableObject {
         claudeNextRefresh = nil
         claudeIsRefreshing = true
         claudeLastAttempt = now
+        ProviderPollPersistence.recordAttempt(for: .claude, at: now, to: defaults)
         updateRefreshingState()
         AppLog.info("scheduler", "Claude refresh started trigger=\(trigger)")
         claudeRefreshTask = Task {
