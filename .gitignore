@@ -8,3 +8,5 @@ artifacts/*
 !artifacts/v030-expanded-custom.png
 !artifacts/compact-vertical.png
 !artifacts/compact-horizontal.png
+!artifacts/notch-tray.png
+!artifacts/notch-detail.png

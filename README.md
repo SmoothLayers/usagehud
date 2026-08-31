@@ -7,11 +7,11 @@
 Always know how much of your 5-hour and weekly usage windows is left —
 at a glance, without leaving your editor or asking the CLI.
 
-[![Latest release](https://img.shields.io/github/v/release/SmoothLayers/usagehud?label=release&color=54E8BA)](https://github.com/SmoothLayers/usagehud/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/SmoothLayers/usagehud/total?color=63C5FF)](https://github.com/SmoothLayers/usagehud/releases)
-![Platform](https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-F59363)
+[![Latest release](https://img.shields.io/github/v/release/SmoothLayers/usagehud?label=release&color=2EF2A9)](https://github.com/SmoothLayers/usagehud/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/SmoothLayers/usagehud/total?color=3FB6FF)](https://github.com/SmoothLayers/usagehud/releases)
+![Platform](https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-FF8A4A)
 ![Made with Swift](https://img.shields.io/badge/Swift-6-FA7343?logo=swift&logoColor=white)
-[![License: MIT](https://img.shields.io/badge/license-MIT-A78BFA)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-9B6DFF)](LICENSE)
 
 <img src="artifacts/usage-hud-no-shadow-preview.png" alt="Usage HUD showing Codex and Claude remaining usage side by side" width="760">
 
@@ -26,17 +26,17 @@ to ask each tool individually. Usage HUD puts the meters in one small, always-av
 - **Remaining percentage** for each provider's current window, with a live countdown to the next reset
 - **Weekly window** remaining at a glance
 - A **menu bar readout** (optional) like `C72 · A39 · K84`, so you don't even need the panel open
-- **Notch mode** (optional): point at the notch and a shelf of provider rings drops out of it
+- **Notch mode** (optional): point at the notch and a tray of provider rings slides out of it
 - **Local notifications** when you're running low and when a window resets
 
 Everything runs on your Mac. There is no server, no account, no analytics, and no separate API key —
 it reuses the CLI sign-ins you already have.
 
-## What's new in v0.6.7
+## What's new in v0.7
 
-- **Fresher Claude meters:** optional Live Claude Updates refresh the HUD from Claude Code sessions without adding usage-endpoint requests.
-- **Clear stale-data handling:** the last good Claude reading remains visible during temporary failures, with explicit stale markers and rate-limit-aware retry timing.
-- **True desktop mode:** with **Always on Top** off, the HUD stays pinned to the desktop across app and Space changes while normal windows remain above it.
+- **Notch mode:** point at the camera housing and a tray of provider rings slides out from under it — see [below](#notch-mode).
+- **A design pass on the tray:** hairline gauge rings with a droplet riding the arc's leading edge, slim detail bars, and a quieter, more premium look overall.
+- **Sturdier Launch at Login:** the registration now survives rebuilds and pending approval.
 
 ## Install
 
@@ -93,14 +93,28 @@ lines are left untouched. Turning the option off restores the original `ccstatus
 ## Notch mode
 
 Turn on **Notch Mode** (menu bar menu, or Settings › Display) and the HUD gets a second home: point
-at the camera housing and a shelf slides out from under it with a progress ring per provider, its
-mark in the middle and the remaining percentage below. Move away and it retracts. Click any ring to
-bring the full HUD forward, or hover one for its reset countdown.
+at the camera housing and a tray slides out from under it with a hairline gauge ring per provider —
+its mark in the middle, the remaining percentage below, and a bright droplet riding the leading edge
+of each arc. Move away and it retracts.
+
+<div align="center">
+<img src="artifacts/notch-tray.png" alt="The notch tray expanded, showing Codex, Claude, and Kimi rings with remaining percentages" width="500">
+</div>
+
+Hover a ring and the tray morphs in place: the ring slides aside and its session and weekly meters
+unfold next to it, each with a live countdown to its reset. Click any ring to bring the full HUD
+forward.
+
+<div align="center">
+<img src="artifacts/notch-detail.png" alt="The notch tray with the Claude ring hovered, showing session and weekly bars with reset countdowns" width="500">
+</div>
 
 - Nothing is drawn while it is retracted, and it ignores the pointer, so the menu bar behaves normally
-- Macs without a notch get the same shelf from a hot zone at the top centre of the screen, marked by a
+- Macs without a notch get the same tray from a hot zone at the top centre of the screen, marked by a
   hairline of provider colour
 - It follows the pointer across displays and re-measures when you rearrange them
+- Stale data desaturates its ring and pins an amber bead to the track, so a stuck meter is visible at
+  a glance
 - **Reduce Motion** swaps the drop animation for a plain cut
 - On macOS 26 and later the tray is Liquid Glass; older versions get a flat black panel
 
