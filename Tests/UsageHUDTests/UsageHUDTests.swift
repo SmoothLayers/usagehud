@@ -1558,6 +1558,25 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertLessThanOrEqual(peekedHeight, frame.height)
     }
 
+    func testLaunchAtLoginIntentPersistsAcrossLaunches() throws {
+        let suiteName = "UsageHUDTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Off by default, and setting it survives a fresh AppSettings — the
+        // stored intent is what lets the app re-register a login item that
+        // macOS silently dropped after a rebuild or move.
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertFalse(settings.launchAtLogin)
+
+        settings.setLaunchAtLogin(true)
+        XCTAssertTrue(settings.launchAtLogin)
+        XCTAssertTrue(AppSettings(defaults: defaults).launchAtLogin)
+
+        settings.setLaunchAtLogin(false)
+        XCTAssertFalse(AppSettings(defaults: defaults).launchAtLogin)
+    }
+
     func testNotchModeIsOffUntilItIsTurnedOn() throws {
         let suiteName = "UsageHUDTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

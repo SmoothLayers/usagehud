@@ -180,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         createNotchController()
         createStatusItem()
         applyInteractionSettings()
+        reconcileLaunchAtLogin()
         // Reassert the desktop-layer placement after app and Space changes.
         // The level itself keeps the HUD below every normal app window.
         let workspaceCenter = NSWorkspace.shared.notificationCenter
@@ -335,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(.separator())
         launchAtLoginItem = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        updateLaunchAtLoginMenuItem()
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Usage HUD", action: #selector(quit), keyEquivalent: "q")
         for item in menu.items { item.target = self }
@@ -786,19 +787,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func toggleLaunchAtLogin() {
+        let enable = !settings.launchAtLogin
         do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-                launchAtLoginItem.state = .off
-            } else {
+            if enable {
                 try SMAppService.mainApp.register()
-                launchAtLoginItem.state = .on
+                settings.setLaunchAtLogin(true)
+                AppLog.info("app", "Launch at Login enabled status=\(SMAppService.mainApp.status.rawValue)")
+                if SMAppService.mainApp.status == .requiresApproval {
+                    promptForLoginItemApproval()
+                }
+            } else {
+                settings.setLaunchAtLogin(false)
+                if SMAppService.mainApp.status != .notRegistered {
+                    try SMAppService.mainApp.unregister()
+                }
+                AppLog.info("app", "Launch at Login disabled")
             }
         } catch {
+            AppLog.warning("app", "Launch at Login toggle failed: \(error.localizedDescription)")
             let alert = NSAlert(error: error)
             alert.messageText = "Couldn’t change Launch at Login"
             alert.runModal()
         }
+        updateLaunchAtLoginMenuItem()
+    }
+
+    /// A login-item registration points at the app where it was registered;
+    /// rebuilding, updating, or moving the bundle strands it and macOS just
+    /// stops launching it — silently. So the stored intent, not the system,
+    /// is the source of truth, and every launch re-registers the copy that
+    /// actually ran.
+    private func reconcileLaunchAtLogin() {
+        let status = SMAppService.mainApp.status
+        // Registrations made before the intent was persisted still count as
+        // the user asking for it.
+        if status == .enabled, !settings.launchAtLogin {
+            settings.setLaunchAtLogin(true)
+        }
+        guard settings.launchAtLogin else { return }
+        do {
+            try SMAppService.mainApp.register()
+            AppLog.info("app", "Launch at Login re-registered previousStatus=\(status.rawValue) status=\(SMAppService.mainApp.status.rawValue)")
+        } catch {
+            AppLog.warning("app", "Launch at Login re-registration failed: \(error.localizedDescription)")
+        }
+        updateLaunchAtLoginMenuItem()
+    }
+
+    /// macOS answered `register` with "pending user approval": the item sits
+    /// disabled in System Settings until the user flips it there.
+    private func promptForLoginItemApproval() {
+        let alert = NSAlert()
+        alert.messageText = "Launch at Login needs your approval"
+        alert.informativeText = "macOS added Usage HUD to Login Items but left it off. Enable it under System Settings → General → Login Items."
+        alert.addButton(withTitle: "Open Login Items")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+    }
+
+    /// The checkmark reflects reality, not hope: intent that macOS has not
+    /// honored yet (pending approval, failed registration) shows as off.
+    private func updateLaunchAtLoginMenuItem() {
+        launchAtLoginItem.state = settings.launchAtLogin && SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     @objc private func quit() {

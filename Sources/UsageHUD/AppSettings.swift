@@ -47,6 +47,10 @@ final class AppSettings: ObservableObject {
     @Published private(set) var kimiAccentHex: String
     @Published private(set) var claudeLiveUsageEnabled: Bool
     @Published private(set) var notchModeEnabled: Bool
+    /// The user's intent, not the system's state: login-item registrations
+    /// silently go stale when the app is rebuilt or moved, so this is the
+    /// truth the app re-asserts against `SMAppService` on every launch.
+    @Published private(set) var launchAtLogin: Bool
 
     var changed: ((AppSettingsChange) -> Void)?
 
@@ -76,6 +80,7 @@ final class AppSettings: ObservableObject {
         static let kimiAccentHex = "kimiAccentHex"
         static let claudeLiveUsageEnabled = "claudeLiveUsageEnabled"
         static let notchModeEnabled = "notchModeEnabled"
+        static let launchAtLogin = "launchAtLogin"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -154,6 +159,7 @@ final class AppSettings: ObservableObject {
         kimiAccentHex = HUDAccentPalette.choices.contains(savedKimiAccent) ? savedKimiAccent : HUDAccentPalette.kimiDefault
         claudeLiveUsageEnabled = defaults.bool(forKey: Key.claudeLiveUsageEnabled)
         notchModeEnabled = defaults.bool(forKey: Key.notchModeEnabled)
+        launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
     }
 
     var visibleProviderCount: Int {
@@ -253,6 +259,12 @@ final class AppSettings: ObservableObject {
         claudeLiveUsageEnabled = enabled
         defaults.set(enabled, forKey: Key.claudeLiveUsageEnabled)
         changed?(.claudeLiveUsage)
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        guard launchAtLogin != enabled else { return }
+        launchAtLogin = enabled
+        defaults.set(enabled, forKey: Key.launchAtLogin)
     }
 
     func setNotchModeEnabled(_ enabled: Bool) {
