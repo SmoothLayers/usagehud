@@ -358,11 +358,15 @@ private struct RingColumn: View {
                 .foregroundStyle(Color.white.opacity(remaining == nil ? 0.35 : 0.92))
                 .frame(width: NotchGeometry.ringDiameter * 0.4, height: NotchGeometry.ringDiameter * 0.4)
 
+            // The stale bead sits on the stroke centreline at the upper-right,
+            // a marker on the instrument's own track rather than a badge
+            // floating off the ring.
             if status == .stale {
                 Circle()
                     .fill(HUDStatusPalette.amber)
                     .frame(width: 5, height: 5)
-                    .offset(x: NotchGeometry.ringDiameter * 0.36, y: -NotchGeometry.ringDiameter * 0.36)
+                    .offset(y: -(NotchGeometry.ringDiameter / 2 - Self.arcInset))
+                    .rotationEffect(.degrees(45))
             }
         }
         .frame(width: NotchGeometry.ringDiameter, height: NotchGeometry.ringDiameter)
