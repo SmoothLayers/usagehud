@@ -10,6 +10,9 @@ final class NotchState: ObservableObject {
     /// Collapsed size of the notch (or its stand-in) on the active display.
     @Published var notchSize = CGSize(width: NotchGeometry.virtualNotchWidth, height: NotchGeometry.fallbackMenuBarHeight)
     @Published var isHardwareNotch = false
+    /// Index of the tile the pointer is on, if any. Lives here rather than in
+    /// view-local state so the controller and previews can read and drive it.
+    @Published var hoveredIndex: Int?
 }
 
 /// The tray that grows out of the notch on hover.
@@ -22,14 +25,13 @@ struct NotchShelfView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var notch: NotchState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hoveredIndex: Int?
     let openHUD: () -> Void
 
     var body: some View {
         let providers = visibleProviders
         let expanded = notch.isExpanded
         let peeking = notch.isPeeking && !expanded
-        let detailIndex = expanded ? hoveredIndex.flatMap { $0 < providers.count ? $0 : nil } : nil
+        let detailIndex = expanded ? notch.hoveredIndex.flatMap { $0 < providers.count ? $0 : nil } : nil
         // The closed shape sits a touch wider than the camera housing so its
         // corner curves stay visible against the housing's own — the notch
         // reads as a soft object, not a cut-out, and the peek has curves to
@@ -55,7 +57,7 @@ struct NotchShelfView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .preferredColorScheme(.dark)
         .onChange(of: expanded) { _, isExpanded in
-            if !isExpanded { hoveredIndex = nil }
+            if !isExpanded { notch.hoveredIndex = nil }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Usage HUD notch tray")
@@ -183,9 +185,9 @@ struct NotchShelfView: View {
         // the whole tray surface. A tile losing hover is usually just the
         // layout sliding out from under a stationary pointer.
         .onHover { hovering in
-            guard !hovering, hoveredIndex != nil else { return }
+            guard !hovering, notch.hoveredIndex != nil else { return }
             withAnimation(reduceMotion ? nil : HUDMotion.detail) {
-                hoveredIndex = nil
+                notch.hoveredIndex = nil
             }
         }
         .onTapGesture(perform: openHUD)
@@ -203,9 +205,9 @@ struct NotchShelfView: View {
             hoverChanged: { hovering in
                 // Tiles only ever *gain* focus here — clearing belongs to the
                 // tray's own exit, or the swap flaps.
-                guard hovering, hoveredIndex != index else { return }
+                guard hovering, notch.hoveredIndex != index else { return }
                 withAnimation(reduceMotion ? nil : HUDMotion.detail) {
-                    hoveredIndex = index
+                    notch.hoveredIndex = index
                 }
             }
         )
@@ -229,7 +231,7 @@ struct NotchShelfView: View {
                 // Rings snap back together on close — a staggered retract
                 // reads as lag.
                 transaction.animation = .spring(response: 0.24, dampingFraction: 0.9)
-            } else if hoveredIndex == nil {
+            } else if notch.hoveredIndex == nil {
                 // Cascade out of the notch left to right, both on first open
                 // and when the row returns after a detail closes.
                 transaction.animation = .spring(response: 0.42, dampingFraction: 0.7).delay(Double(index) * 0.055)
@@ -302,7 +304,10 @@ private struct RingColumn: View {
     /// The hovered ring keeps its glow while its detail is open.
     let isEmphasized: Bool
     let index: Int
-    @State private var hasAppeared = false
+    /// Skips the fill-in animation so the preview render harness captures the
+    /// settled state instead of frame zero.
+    private static let startFilled = ProcessInfo.processInfo.environment["RENDER_NOTCH_PREVIEWS"] == "1"
+    @State private var hasAppeared = RingColumn.startFilled
 
     private var remaining: Double? { state.usage?.primary.remainingPercent }
 
@@ -326,29 +331,32 @@ private struct RingColumn: View {
     }
 
     /// Half the arc's line width: keeps the stroke fully inside the frame.
-    private static let arcInset: CGFloat = 2.4
-    private static let arcLineWidth: CGFloat = 4.8
+    /// A hairline, not a band — the ring should read as an instrument marking,
+    /// and the tray's premium feel dies the moment it turns into a donut chart.
+    private static let arcInset: CGFloat = 1
+    private static let arcLineWidth: CGFloat = 2
 
     private var ring: some View {
         ZStack {
             bloom
 
             // Matte face: a whisper of fill so the ring reads as an object on
-            // the glass, flat like the hardware it hangs from.
+            // the glass, flat like the hardware it hangs from. Focus warms it
+            // with the provider's colour rather than blooming behind it.
             Circle()
                 .inset(by: Self.arcInset + Self.arcLineWidth / 2)
-                .fill(Color.white.opacity(0.05))
+                .fill(isEmphasized ? accent.opacity(0.14) : Color.white.opacity(0.05))
 
             // The full track, so the arc always has a visible path to ride.
             Circle()
                 .inset(by: Self.arcInset)
-                .stroke(Color.white.opacity(0.13), lineWidth: Self.arcLineWidth)
+                .stroke(Color.white.opacity(0.12), lineWidth: Self.arcLineWidth)
 
             arc
 
             ProviderGlyph(kind: kind)
-                .foregroundStyle(Color.white.opacity(remaining == nil ? 0.4 : 0.97))
-                .frame(width: NotchGeometry.ringDiameter * 0.42, height: NotchGeometry.ringDiameter * 0.42)
+                .foregroundStyle(Color.white.opacity(remaining == nil ? 0.35 : 0.92))
+                .frame(width: NotchGeometry.ringDiameter * 0.4, height: NotchGeometry.ringDiameter * 0.4)
 
             if status == .stale {
                 Circle()
@@ -373,12 +381,6 @@ private struct RingColumn: View {
                     .blur(radius: 12)
                     .scaleEffect(1.05 + 0.05 * breath)
             }
-        } else if isEmphasized {
-            Circle()
-                .fill(accent)
-                .opacity(0.2)
-                .blur(radius: 12)
-                .scaleEffect(1.08)
         }
     }
 
@@ -401,8 +403,8 @@ private struct RingColumn: View {
         if remaining != nil {
             Circle()
                 .fill(Color.white.opacity(0.95))
-                .frame(width: 4, height: 4)
-                .shadow(color: accent.opacity(0.9), radius: 3)
+                .frame(width: 3.5, height: 3.5)
+                .shadow(color: accent.opacity(0.9), radius: 2.5)
                 .offset(y: -tipRadius)
                 .rotationEffect(.degrees(fraction * 360))
                 .saturation(status == .stale ? 0.35 : 1)
@@ -415,9 +417,9 @@ private struct RingColumn: View {
     private var percentLabel: some View {
         if let remaining {
             Text("\(Int(remaining.rounded()))%")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.system(size: 11, weight: .medium, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(Color.white.opacity(isEmphasized ? 1 : 0.92))
+                .foregroundStyle(Color.white.opacity(isEmphasized ? 0.95 : 0.6))
                 .contentTransition(.numericText(value: remaining))
                 .animation(reduceMotion ? nil : HUDMotion.value, value: remaining)
                 .opacity(hasAppeared ? 1 : 0)
@@ -477,24 +479,33 @@ private struct NotchInlineDetail: View {
                 HStack(spacing: 8) {
                     Text(title)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color.white.opacity(0.82))
-                    Spacer(minLength: 0)
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
                     Text("\(Int(window.remainingPercent.rounded()))% · \(resetText(window.resetsAt, now: context.date))")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(Color.white.opacity(0.5))
+                        .foregroundStyle(Color.white.opacity(0.45))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.13))
+                    Capsule().fill(Color.white.opacity(0.1))
                     Capsule()
-                        .fill(accent)
-                        .frame(width: max(4, geometry.size.width * window.remainingPercent / 100))
-                        .shadow(color: accent.opacity(0.5), radius: 3)
+                        .fill(
+                            LinearGradient(
+                                colors: [accent.opacity(0.7), accent],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(3, geometry.size.width * window.remainingPercent / 100))
+                        .shadow(color: accent.opacity(0.35), radius: 2.5)
                 }
             }
-            .frame(height: 3.5)
+            .frame(height: 3)
         }
     }
 
