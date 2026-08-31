@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 final class NotchState: ObservableObject {
     @Published var isExpanded = false
+    /// Pointer is parked in the hot zone but the tray has not opened yet: the
+    /// shape swells a little so the notch acknowledges the cursor.
+    @Published var isPeeking = false
     /// Collapsed size of the notch (or its stand-in) on the active display.
     @Published var notchSize = CGSize(width: NotchGeometry.virtualNotchWidth, height: NotchGeometry.fallbackMenuBarHeight)
     @Published var isHardwareNotch = false
@@ -25,23 +28,29 @@ struct NotchShelfView: View {
     var body: some View {
         let providers = visibleProviders
         let expanded = notch.isExpanded
+        let peeking = notch.isPeeking && !expanded
         let detailIndex = expanded ? hoveredIndex.flatMap { $0 < providers.count ? $0 : nil } : nil
+        // The closed shape sits a touch wider than the camera housing so its
+        // corner curves stay visible against the housing's own — the notch
+        // reads as a soft object, not a cut-out, and the peek has curves to
+        // grow from.
+        let closedWidth = notch.notchSize.width
+            + (notch.isHardwareNotch ? NotchGeometry.closedOverhang * 2 : 0)
+            + (peeking ? NotchGeometry.peekWidthGrowth : 0)
+        // One width for every open state: hovering swaps the tray's content
+        // but never resizes the shape, so the silhouette is a constant.
         let width = expanded
             ? NotchGeometry.expandedWidth(notch: notchMetrics, providerCount: providers.count)
-            : notch.notchSize.width
-        let detailHeight = detailIndex.map { index -> CGFloat in
-            let hasWeekly = store.state(for: providers[index]).usage?.secondary != nil
-            return NotchGeometry.detailHeight(windowCount: hasWeekly ? 2 : 1)
-        } ?? 0
+            : closedWidth
         let height = expanded
-            ? notch.notchSize.height + NotchGeometry.trayHeight + detailHeight
-            : notch.notchSize.height
+            ? notch.notchSize.height + NotchGeometry.trayHeight
+            : notch.notchSize.height + (peeking ? NotchGeometry.peekHeightGrowth : 0)
 
         return ZStack(alignment: .top) {
             // The window stays at its largest size so only the shape animates.
             Color.clear
 
-            shelf(width: width, height: height, expanded: expanded, providers: providers, detailIndex: detailIndex)
+            shelf(width: width, height: height, expanded: expanded, peeking: peeking, providers: providers, detailIndex: detailIndex)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .preferredColorScheme(.dark)
@@ -63,72 +72,140 @@ struct NotchShelfView: View {
         width: CGFloat,
         height: CGFloat,
         expanded: Bool,
+        peeking: Bool,
         providers: [ProviderKind],
         detailIndex: Int?
     ) -> some View {
+        // The closed shape keeps small curves so opening grows them rather
+        // than conjuring them: the notch always reads as the same soft object.
         let shape = NotchTrayShape(
-            topRadius: expanded ? NotchGeometry.trayTopRadius : 0,
-            bottomRadius: expanded ? NotchGeometry.trayBottomRadius : 0
+            topRadius: expanded ? NotchGeometry.trayTopRadius : NotchGeometry.closedTopRadius,
+            bottomRadius: expanded ? NotchGeometry.trayBottomRadius : NotchGeometry.closedBottomRadius
         )
         return TraySurface(shape: shape, expanded: expanded)
             .overlay(
-                // Barely-there rim: enough to hold an edge on a dark desktop,
-                // not enough to outline the tray. NotchNook has none at all.
-                shape.stroke(Color.white.opacity(expanded ? 0.05 : 0), lineWidth: 0.75)
+                // Barely-there rim, brightest along the top flare where the
+                // tray meets the screen edge — a specular catch that makes it
+                // read as a physical object sliding out of the housing — with
+                // a fainter glint along the free-hanging bottom lip.
+                shape.stroke(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.white.opacity(0.11), location: 0),
+                            .init(color: Color.white.opacity(0.02), location: 0.3),
+                            .init(color: Color.white.opacity(0.015), location: 0.75),
+                            .init(color: Color.white.opacity(0.07), location: 1)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 0.75
+                )
+                .opacity(expanded ? 1 : 0)
             )
-            .frame(width: width, height: height)
+            .frame(height: height)
+            .animation(reduceMotion ? nil : (expanded ? HUDMotion.openHeight : HUDMotion.close), value: expanded)
+            .frame(width: width)
+            .animation(reduceMotion ? nil : (expanded ? HUDMotion.openWidth : HUDMotion.close), value: expanded)
             // A collapsed tray would otherwise paint a black bar over the menu
-            // bar on displays with no camera housing to hide behind.
-            .opacity(expanded || notch.isHardwareNotch ? 1 : 0)
-            .shadow(color: .black.opacity(expanded ? 0.6 : 0), radius: 22, y: 12)
+            // bar on displays with no camera housing to hide behind — unless
+            // the pointer is already parked there, in which case the peek IS
+            // the affordance the housing would have provided.
+            .opacity(expanded || peeking || notch.isHardwareNotch ? 1 : 0)
+            // The peek casts a whisper of the open tray's shadow, so the notch
+            // visibly wakes before it moves.
+            .shadow(
+                color: .black.opacity(expanded ? 0.6 : (peeking ? 0.35 : 0)),
+                radius: expanded ? 22 : 8,
+                y: expanded ? 12 : 3
+            )
             .overlay(alignment: .top) {
                 if expanded {
-                    VStack(spacing: 0) {
-                        tray(providers)
-                        if let detailIndex {
-                            detail(providers[detailIndex])
-                        }
-                    }
-                    .padding(.top, notch.notchSize.height)
-                    .frame(width: width)
-                    // The detail slides out from under the rings rather than
-                    // spilling past the shape while it is still growing.
-                    .clipped()
+                    tray(providers, detailIndex: detailIndex)
+                        .padding(.top, notch.notchSize.height)
+                        .frame(width: width)
+                        // Swapping content stays inside the shape while the
+                        // tray is still growing open.
+                        .clipped()
                 }
             }
             .overlay(alignment: .top) {
-                if !notch.isHardwareNotch && !expanded {
+                if !notch.isHardwareNotch && !expanded && !peeking {
                     collapsedHint
                 }
             }
     }
 
-    private func tray(_ providers: [ProviderKind]) -> some View {
-        HStack(spacing: NotchGeometry.tileSpacing) {
+    /// One footprint, two arrangements: the resting ring row, or — while a
+    /// ring is hovered — that ring slid to the left edge with its bars
+    /// unfolded in the space the others vacate.
+    ///
+    /// Every ring stays in the tree the whole time; the unhovered ones just
+    /// collapse to zero width. Nothing is removed mid-hover, so no view can
+    /// fire a spurious "unhover" as it disappears, and the gauges keep their
+    /// fill instead of replaying their intro when the row returns.
+    private func tray(_ providers: [ProviderKind], detailIndex: Int?) -> some View {
+        HStack(spacing: detailIndex == nil ? NotchGeometry.tileSpacing : 0) {
             ForEach(Array(providers.enumerated()), id: \.element) { item in
-                tile(kind: item.element, index: item.offset)
+                let isFocused = detailIndex == item.offset
+                let isCollapsed = detailIndex != nil && !isFocused
+                tile(kind: item.element, index: item.offset, isFocused: isFocused)
+                    .frame(width: isCollapsed ? 0 : NotchGeometry.tileWidth)
+                    .scaleEffect(isCollapsed ? 0.5 : 1)
+                    .opacity(isCollapsed ? 0 : 1)
+                    .allowsHitTesting(!isCollapsed)
+            }
+
+            if let detailIndex {
+                let kind = providers[detailIndex]
+                NotchInlineDetail(
+                    state: store.state(for: kind),
+                    accent: Color(hudHex: settings.accentHex(for: kind)),
+                    notice: store.notice(for: kind)
+                )
+                .padding(.leading, NotchGeometry.detailInnerSpacing)
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .offset(x: 18))
+                            .combined(with: .blurFade(radius: 6)),
+                        removal: .opacity.combined(with: .blurFade(radius: 4))
+                    )
+                )
             }
         }
+        .frame(maxWidth: .infinity, alignment: detailIndex == nil ? .center : .leading)
         .padding(.top, NotchGeometry.trayTopPadding)
         .padding(.bottom, NotchGeometry.trayBottomPadding)
         .padding(.horizontal, NotchGeometry.trayHorizontalPadding)
+        .contentShape(Rectangle())
+        // The one place hover ever *clears*: the pointer demonstrably leaving
+        // the whole tray surface. A tile losing hover is usually just the
+        // layout sliding out from under a stationary pointer.
+        .onHover { hovering in
+            guard !hovering, hoveredIndex != nil else { return }
+            withAnimation(reduceMotion ? nil : HUDMotion.detail) {
+                hoveredIndex = nil
+            }
+        }
+        .onTapGesture(perform: openHUD)
     }
 
-    private func tile(kind: ProviderKind, index: Int) -> some View {
+    private func tile(kind: ProviderKind, index: Int, isFocused: Bool) -> some View {
         NotchProviderTile(
             kind: kind,
             state: store.state(for: kind),
+            status: store.visualStatus(for: kind),
             accent: Color(hudHex: settings.accentHex(for: kind)),
-            isStale: store.isStale(for: kind),
-            isHighlighted: hoveredIndex == index,
-            isDimmed: hoveredIndex != nil && hoveredIndex != index,
             index: index,
+            isFocused: isFocused,
             open: openHUD,
             hoverChanged: { hovering in
-                if hovering {
+                // Tiles only ever *gain* focus here — clearing belongs to the
+                // tray's own exit, or the swap flaps.
+                guard hovering, hoveredIndex != index else { return }
+                withAnimation(reduceMotion ? nil : HUDMotion.detail) {
                     hoveredIndex = index
-                } else if hoveredIndex == index {
-                    hoveredIndex = nil
                 }
             }
         )
@@ -136,8 +213,11 @@ struct NotchShelfView: View {
             .asymmetric(
                 insertion: .scale(scale: 0.4, anchor: .top)
                     .combined(with: .opacity)
-                    .combined(with: .offset(y: -14)),
-                removal: .scale(scale: 0.82, anchor: .top).combined(with: .opacity)
+                    .combined(with: .offset(y: -14))
+                    .combined(with: .blurFade(radius: 5)),
+                // A plain evaporation: anything fancier would fight the
+                // hovered ring's matched-geometry flight to the detail.
+                removal: .opacity.combined(with: .blurFade(radius: 5))
             )
         )
         .transaction { transaction in
@@ -145,23 +225,19 @@ struct NotchShelfView: View {
                 transaction.animation = nil
                 return
             }
-            // Rings cascade out of the notch left to right, but snap back
-            // together on the way in — a staggered retract reads as lag.
-            transaction.animation = notch.isExpanded
-                ? .spring(response: 0.42, dampingFraction: 0.7).delay(Double(index) * 0.055)
-                : .spring(response: 0.24, dampingFraction: 0.9)
+            if !notch.isExpanded {
+                // Rings snap back together on close — a staggered retract
+                // reads as lag.
+                transaction.animation = .spring(response: 0.24, dampingFraction: 0.9)
+            } else if hoveredIndex == nil {
+                // Cascade out of the notch left to right, both on first open
+                // and when the row returns after a detail closes.
+                transaction.animation = .spring(response: 0.42, dampingFraction: 0.7).delay(Double(index) * 0.055)
+            } else {
+                // Swapping to the detail: everything moves on the one spring.
+                transaction.animation = HUDMotion.detail
+            }
         }
-    }
-
-    private func detail(_ kind: ProviderKind) -> some View {
-        NotchDetailSection(
-            kind: kind,
-            state: store.state(for: kind),
-            accent: Color(hudHex: settings.accentHex(for: kind)),
-            isStale: store.isStale(for: kind),
-            notice: store.notice(for: kind)
-        )
-        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     /// Without a camera housing there is nothing on screen to hint at the hot
@@ -187,18 +263,45 @@ struct NotchShelfView: View {
 
 // MARK: - Ring
 
+/// A ring in the row: the ring column plus hit-testing. It never leaves the
+/// tree while the tray is open — hovering just changes how much room it gets.
 private struct NotchProviderTile: View {
+    let kind: ProviderKind
+    let state: ProviderState
+    let status: ProviderVisualStatus
+    let accent: Color
+    let index: Int
+    /// This ring's detail is the tray's current content.
+    let isFocused: Bool
+    let open: () -> Void
+    let hoverChanged: (Bool) -> Void
+
+    var body: some View {
+        RingColumn(
+            kind: kind,
+            state: state,
+            status: status,
+            accent: accent,
+            isEmphasized: isFocused,
+            index: index
+        )
+        .frame(width: NotchGeometry.tileWidth)
+        .contentShape(Rectangle())
+        .onHover(perform: hoverChanged)
+        .onTapGesture(perform: open)
+    }
+}
+
+/// One provider's ring with its percent underneath.
+private struct RingColumn: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let kind: ProviderKind
     let state: ProviderState
+    let status: ProviderVisualStatus
     let accent: Color
-    let isStale: Bool
-    let isHighlighted: Bool
-    /// Another ring has focus, so this one steps back.
-    let isDimmed: Bool
+    /// The hovered ring keeps its glow while its detail is open.
+    let isEmphasized: Bool
     let index: Int
-    let open: () -> Void
-    let hoverChanged: (Bool) -> Void
     @State private var hasAppeared = false
 
     private var remaining: Double? { state.usage?.primary.remainingPercent }
@@ -208,14 +311,6 @@ private struct NotchProviderTile: View {
             ring
             percentLabel
         }
-        .frame(maxWidth: .infinity)
-        .scaleEffect(isHighlighted && !reduceMotion ? 1.07 : 1)
-        .opacity(isDimmed ? 0.55 : 1)
-        .animation(.spring(response: 0.26, dampingFraction: 0.72), value: isHighlighted)
-        .animation(.easeOut(duration: 0.18), value: isDimmed)
-        .contentShape(Rectangle())
-        .onHover(perform: hoverChanged)
-        .onTapGesture(perform: open)
         .accessibilityLabel(accessibilityText)
         .onAppear {
             guard !reduceMotion else {
@@ -230,70 +325,116 @@ private struct NotchProviderTile: View {
         }
     }
 
+    /// Half the arc's line width: keeps the stroke fully inside the frame.
+    private static let arcInset: CGFloat = 2.4
+    private static let arcLineWidth: CGFloat = 4.8
+
     private var ring: some View {
         ZStack {
-            // Ambient bloom in the provider's colour, so the tray is not just
-            // grey discs on black.
-            Circle()
-                .fill(accent)
-                .opacity(isHighlighted ? 0.26 : 0.12)
-                .blur(radius: 12)
-                .scaleEffect(1.08)
+            bloom
 
-            // A solid disc, not a wash, so the arc reads crisply against it.
+            // Matte face: a whisper of fill so the ring reads as an object on
+            // the glass, flat like the hardware it hangs from.
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [Color(white: 0.205), Color(white: 0.115)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+                .inset(by: Self.arcInset + Self.arcLineWidth / 2)
+                .fill(Color.white.opacity(0.05))
+
+            // The full track, so the arc always has a visible path to ride.
             Circle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.18), Color.white.opacity(0.02)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1
-                )
-            Circle()
-                .inset(by: 1.75)
-                .trim(from: 0, to: hasAppeared ? (remaining ?? 0) / 100 : 0)
-                .stroke(accent, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(reduceMotion ? nil : .smooth(duration: 0.65), value: remaining ?? 0)
+                .inset(by: Self.arcInset)
+                .stroke(Color.white.opacity(0.13), lineWidth: Self.arcLineWidth)
+
+            arc
 
             ProviderGlyph(kind: kind)
                 .foregroundStyle(Color.white.opacity(remaining == nil ? 0.4 : 0.97))
-                .frame(width: NotchGeometry.ringDiameter * 0.44, height: NotchGeometry.ringDiameter * 0.44)
+                .frame(width: NotchGeometry.ringDiameter * 0.42, height: NotchGeometry.ringDiameter * 0.42)
 
-            if isStale {
+            if status == .stale {
                 Circle()
-                    .fill(Color(red: 1, green: 0.76, blue: 0.32))
+                    .fill(HUDStatusPalette.amber)
                     .frame(width: 5, height: 5)
-                    .offset(x: NotchGeometry.ringDiameter * 0.35, y: -NotchGeometry.ringDiameter * 0.35)
+                    .offset(x: NotchGeometry.ringDiameter * 0.36, y: -NotchGeometry.ringDiameter * 0.36)
             }
         }
         .frame(width: NotchGeometry.ringDiameter, height: NotchGeometry.ringDiameter)
+    }
+
+    /// Flat at rest, like the mock the tray is styled after; colour only
+    /// appears as focus (hover) or life (a streaming session breathing).
+    @ViewBuilder
+    private var bloom: some View {
+        if status == .live, !reduceMotion, !isEmphasized {
+            TimelineView(.animation(minimumInterval: 1 / 20)) { context in
+                let breath = HUDMotion.breath(context.date)
+                Circle()
+                    .fill(accent)
+                    .opacity(0.08 + 0.12 * breath)
+                    .blur(radius: 12)
+                    .scaleEffect(1.05 + 0.05 * breath)
+            }
+        } else if isEmphasized {
+            Circle()
+                .fill(accent)
+                .opacity(0.2)
+                .blur(radius: 12)
+                .scaleEffect(1.08)
+        }
+    }
+
+    @ViewBuilder
+    private var arc: some View {
+        let fraction = hasAppeared ? (remaining ?? 0) / 100 : 0
+        // Stroke centreline sits half the line width inside the inset circle.
+        let tipRadius = NotchGeometry.ringDiameter / 2 - Self.arcInset - Self.arcLineWidth / 2
+
+        Circle()
+            .inset(by: Self.arcInset)
+            .trim(from: 0, to: fraction)
+            .stroke(accent, style: StrokeStyle(lineWidth: Self.arcLineWidth, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+            .saturation(status == .stale ? 0.35 : 1)
+            .animation(reduceMotion ? nil : HUDMotion.value, value: remaining ?? 0)
+
+        // A bright droplet riding the leading edge of the arc, so a sweep is
+        // something moving, not just a length changing.
+        if remaining != nil {
+            Circle()
+                .fill(Color.white.opacity(0.95))
+                .frame(width: 4, height: 4)
+                .shadow(color: accent.opacity(0.9), radius: 3)
+                .offset(y: -tipRadius)
+                .rotationEffect(.degrees(fraction * 360))
+                .saturation(status == .stale ? 0.35 : 1)
+                .opacity(hasAppeared ? 1 : 0)
+                .animation(reduceMotion ? nil : HUDMotion.value, value: remaining ?? 0)
+        }
     }
 
     @ViewBuilder
     private var percentLabel: some View {
         if let remaining {
             Text("\(Int(remaining.rounded()))%")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(Color.white.opacity(isHighlighted ? 1 : 0.88))
+                .foregroundStyle(Color.white.opacity(isEmphasized ? 1 : 0.92))
                 .contentTransition(.numericText(value: remaining))
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: remaining)
+                .animation(reduceMotion ? nil : HUDMotion.value, value: remaining)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -5)
+        } else if case let .cooling(until) = status {
+            // The cooldown is a designed state, not an error: the ring counts
+            // down to its own recovery.
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(UsageFormatting.durationText(max(1, until.timeIntervalSince(context.date))))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(HUDStatusPalette.amber.opacity(0.9))
+            }
         } else {
             Text(state.isFailed ? "ERR" : "—")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.45))
+                .foregroundStyle(state.isFailed ? HUDStatusPalette.amber.opacity(0.8) : Color.white.opacity(0.45))
         }
     }
 
@@ -303,73 +444,45 @@ private struct NotchProviderTile: View {
     }
 }
 
-// MARK: - Detail, grown inside the tray
+// MARK: - Detail, unfolded beside the ring
 
-private struct NotchDetailSection: View {
-    let kind: ProviderKind
+/// The compact bars that morph out next to a hovered ring. No header — the
+/// ring beside them already says which provider this is — and no divider: the
+/// tile is one piece, not a card inside a card.
+private struct NotchInlineDetail: View {
     let state: ProviderState
     let accent: Color
-    let isStale: Bool
     let notice: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NotchGeometry.detailSpacing) {
-            // A hairline, not a border: the detail belongs to the tray, it is
-            // not a card sitting on top of it.
-            Rectangle()
-                .fill(Color.white.opacity(0.06))
-                .frame(height: 1)
-                .padding(.horizontal, NotchGeometry.detailDividerInset)
-
-            header
+        VStack(alignment: .leading, spacing: 9) {
             switch state {
             case let .loaded(usage):
-                window(usage.primary, title: "Current session")
+                row(usage.primary, title: "Session")
                 if let secondary = usage.secondary {
-                    window(secondary, title: "All models")
+                    row(secondary, title: "Week")
                 }
             case .loading:
                 message("Checking limits…")
             case let .failed(text):
-                message(text)
+                message(notice ?? text)
             }
         }
-        .padding(.top, NotchGeometry.detailTopPadding)
-        .padding(.bottom, NotchGeometry.detailBottomPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var header: some View {
-        HStack(spacing: 7) {
-            ProviderGlyph(kind: kind)
-                .foregroundStyle(accent)
-                .frame(width: 12, height: 12)
-            Text(kind.displayName.capitalized)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-            Spacer(minLength: 0)
-            if isStale {
-                Text("STALE")
-                    .font(.system(size: 8, weight: .black, design: .rounded))
-                    .foregroundStyle(Color(red: 1, green: 0.76, blue: 0.32))
-            }
-        }
-        .frame(height: NotchGeometry.detailHeaderHeight)
-        .padding(.horizontal, NotchGeometry.detailHorizontalPadding)
-    }
-
-    private func window(_ window: UsageWindow, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func row(_ window: UsageWindow, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: 8) {
                     Text(title)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color.white.opacity(0.78))
+                        .foregroundStyle(Color.white.opacity(0.82))
                     Spacer(minLength: 0)
                     Text("\(Int(window.remainingPercent.rounded()))% · \(resetText(window.resetsAt, now: context.date))")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(Color.white.opacity(0.45))
+                        .foregroundStyle(Color.white.opacity(0.5))
                 }
             }
             GeometryReader { geometry in
@@ -378,13 +491,11 @@ private struct NotchDetailSection: View {
                     Capsule()
                         .fill(accent)
                         .frame(width: max(4, geometry.size.width * window.remainingPercent / 100))
-                        .shadow(color: accent.opacity(0.5), radius: 4)
+                        .shadow(color: accent.opacity(0.5), radius: 3)
                 }
             }
-            .frame(height: 4)
+            .frame(height: 3.5)
         }
-        .frame(height: NotchGeometry.detailRowHeight, alignment: .top)
-        .padding(.horizontal, NotchGeometry.detailHorizontalPadding)
     }
 
     private func resetText(_ date: Date?, now: Date) -> String {
@@ -395,12 +506,11 @@ private struct NotchDetailSection: View {
     }
 
     private func message(_ text: String) -> some View {
-        Text(notice ?? text)
+        Text(text)
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(Color.white.opacity(0.7))
-            .lineLimit(2)
-            .frame(height: NotchGeometry.detailRowHeight, alignment: .top)
-            .padding(.horizontal, NotchGeometry.detailHorizontalPadding)
+            .lineLimit(3)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -421,9 +531,9 @@ private struct TraySurface: View {
     static let tintStrength: Double = 0.9
     /// `Glass.regular` keeps a floor of luminosity so its material stays
     /// legible, which tint alone cannot drive out. A scrim over the top takes
-    /// it the rest of the way to the hardware notch's black, leaving the
-    /// refracted edges and specular highlights showing through.
-    static let scrimOpacity: Double = 0.42
+    /// it most of the way to the hardware notch's matte black, leaving only
+    /// the refracted edges and specular highlights showing through.
+    static let scrimOpacity: Double = 0.56
 
     let shape: NotchTrayShape
     let expanded: Bool
@@ -433,7 +543,9 @@ private struct TraySurface: View {
         if #available(macOS 26.0, *) {
             Color.clear
                 .glassEffect(
-                    .regular.tint(Color.black.opacity(expanded ? Self.tintStrength : 1)),
+                    // `interactive` lets the material itself answer the
+                    // pointer with the system's liquid shimmer.
+                    .regular.tint(Color.black.opacity(expanded ? Self.tintStrength : 1)).interactive(),
                     in: shape
                 )
                 .overlay(shape.fill(Color.black.opacity(expanded ? Self.scrimOpacity : 1)))

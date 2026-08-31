@@ -69,6 +69,44 @@ enum ProviderState: Equatable {
     }
 }
 
+/// The one status vocabulary every surface speaks.
+///
+/// Rings, cards, and strips all derive their colour and behaviour from this
+/// instead of re-deriving it from raw state, so "stale" or "cooling down"
+/// looks the same everywhere it appears.
+enum ProviderVisualStatus: Equatable {
+    case loading
+    /// A live session is streaming updates right now.
+    case live
+    /// A recent poll succeeded and nothing has gone wrong since.
+    case fresh
+    /// Showing a retained cache with a failing refresh behind it.
+    case stale
+    /// Rate limited with nothing cached to show; counting down to the retry.
+    case cooling(until: Date)
+    /// Failed with nothing to show. Self-healing, so amber — never alarm-red.
+    case error
+
+    static func status(
+        state: ProviderState,
+        isStale: Bool,
+        cooldownUntil: Date?,
+        now: Date = .now
+    ) -> ProviderVisualStatus {
+        switch state {
+        case .loading:
+            return .loading
+        case .failed:
+            if let cooldownUntil, now < cooldownUntil { return .cooling(until: cooldownUntil) }
+            return .error
+        case let .loaded(usage):
+            if isStale { return .stale }
+            if usage.source == .liveSession { return .live }
+            return .fresh
+        }
+    }
+}
+
 enum UsageError: LocalizedError {
     case executableMissing(String)
     case commandFailed(String)

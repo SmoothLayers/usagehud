@@ -859,6 +859,12 @@ struct KimiUsageProvider: UsageProviding {
 struct ClaudeUsageProvider: UsageProviding {
     private let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
+    // Claude Code rotates its stored credential in a revoke-then-write window,
+    // so a 401 can land while the replacement token is still milliseconds from
+    // the Keychain. Long enough for that write to settle, short next to the
+    // ten-second request timeout.
+    static let rotationGrace: TimeInterval = 2.5
+
     func fetch() async throws -> ProviderUsage {
         AppLog.info("claude", "Usage request started")
         var credential = try await ClaudeCredentials.load()
@@ -866,11 +872,18 @@ struct ClaudeUsageProvider: UsageProviding {
 
         // Claude Code can rotate its scoped Keychain token while a poll is in
         // flight. Re-read once on 401, but only retry when the token changed.
-        if response.http.statusCode == 401,
-           let refreshed = try? await ClaudeCredentials.load(excludingAccessToken: credential.accessToken) {
-            AppLog.info("claude", "Credential rotated after HTTP 401; retrying once source=\(refreshed.source.rawValue)")
-            credential = refreshed
-            response = try await requestUsage(token: credential.accessToken)
+        if response.http.statusCode == 401 {
+            var refreshed = try? await ClaudeCredentials.load(excludingAccessToken: credential.accessToken)
+            if refreshed == nil {
+                AppLog.info("claude", "HTTP 401 with unchanged credential; waiting \(Self.rotationGrace)s for an in-flight rotation")
+                try? await Task.sleep(nanoseconds: UInt64(Self.rotationGrace * 1_000_000_000))
+                refreshed = try? await ClaudeCredentials.load(excludingAccessToken: credential.accessToken)
+            }
+            if let refreshed {
+                AppLog.info("claude", "Credential rotated after HTTP 401; retrying once source=\(refreshed.source.rawValue)")
+                credential = refreshed
+                response = try await requestUsage(token: credential.accessToken)
+            }
         }
 
         // A stored token also simply expires when no Claude Code session has

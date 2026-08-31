@@ -38,9 +38,9 @@ struct HUDView: View {
                     ProviderCard(
                         kind: .codex,
                         state: store.codex,
+                        status: store.visualStatus(for: .codex),
                         compact: false,
                         notice: nil,
-                        isStale: false,
                         lastSuccess: store.codexLastSuccess,
                         nextRefresh: store.codexNextRefresh,
                         accent: Color(hudHex: settings.codexAccentHex),
@@ -55,9 +55,9 @@ struct HUDView: View {
                     ProviderCard(
                         kind: .claude,
                         state: store.claude,
+                        status: store.visualStatus(for: .claude),
                         compact: false,
                         notice: store.claudeNotice,
-                        isStale: store.claudeIsStale,
                         lastSuccess: store.claudeLastSuccess,
                         nextRefresh: store.claudeNextRefresh,
                         accent: Color(hudHex: settings.claudeAccentHex),
@@ -72,9 +72,9 @@ struct HUDView: View {
                     ProviderCard(
                         kind: .kimi,
                         state: store.kimi,
+                        status: store.visualStatus(for: .kimi),
                         compact: false,
                         notice: store.kimiNotice,
-                        isStale: store.kimiIsStale,
                         lastSuccess: store.kimiLastSuccess,
                         nextRefresh: store.kimiNextRefresh,
                         accent: Color(hudHex: settings.kimiAccentHex),
@@ -113,8 +113,8 @@ struct HUDView: View {
                     CompactUsageStrip(
                         kind: .codex,
                         state: store.codex,
+                        status: store.visualStatus(for: .codex),
                         notice: nil,
-                        isStale: false,
                         lastSuccess: store.codexLastSuccess,
                         nextRefresh: store.codexNextRefresh,
                         accent: Color(hudHex: settings.codexAccentHex),
@@ -128,8 +128,8 @@ struct HUDView: View {
                     CompactUsageStrip(
                         kind: .claude,
                         state: store.claude,
+                        status: store.visualStatus(for: .claude),
                         notice: store.claudeNotice,
-                        isStale: store.claudeIsStale,
                         lastSuccess: store.claudeLastSuccess,
                         nextRefresh: store.claudeNextRefresh,
                         accent: Color(hudHex: settings.claudeAccentHex),
@@ -143,8 +143,8 @@ struct HUDView: View {
                     CompactUsageStrip(
                         kind: .kimi,
                         state: store.kimi,
+                        status: store.visualStatus(for: .kimi),
                         notice: store.kimiNotice,
-                        isStale: store.kimiIsStale,
                         lastSuccess: store.kimiLastSuccess,
                         nextRefresh: store.kimiNextRefresh,
                         accent: Color(hudHex: settings.kimiAccentHex),
@@ -295,8 +295,8 @@ private struct CompactUsageStrip: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let kind: ProviderKind
     let state: ProviderState
+    let status: ProviderVisualStatus
     let notice: String?
-    let isStale: Bool
     let lastSuccess: Date?
     let nextRefresh: Date?
     let accent: Color
@@ -307,15 +307,19 @@ private struct CompactUsageStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // Loading, loaded, and failed hand over through a blur-fade so a
+            // state change reads as the card resolving, not flickering.
             switch state {
             case .loading:
-                loading
+                loading.transition(.blurFade(radius: 4).combined(with: .opacity))
             case let .failed(message):
-                failure(message)
+                failure(message).transition(.blurFade(radius: 4).combined(with: .opacity))
             case let .loaded(usage):
-                loaded(usage)
+                loaded(usage).transition(.blurFade(radius: 4).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? nil : HUDMotion.detail, value: state)
+        .animation(reduceMotion ? nil : HUDMotion.detail, value: status)
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, minHeight: 60, maxHeight: .infinity, alignment: .leading)
@@ -338,12 +342,17 @@ private struct CompactUsageStrip: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 providerLabel
-                if isStale, let notice {
+                if status == .live {
+                    LiveBadge(accent: accent, textScale: textScale)
+                        .transition(.statusBadge)
+                }
+                if status == .stale, let notice {
                     Text("STALE")
                         .font(.system(size: 7 * textScale, weight: .black, design: .monospaced))
                         .tracking(0.7)
-                        .foregroundStyle(Color(red: 1, green: 0.76, blue: 0.32))
+                        .foregroundStyle(HUDStatusPalette.amber)
                         .help(notice)
+                        .transition(.statusBadge)
                 }
                 Spacer()
                 Text(usage.primary.remainingPercent, format: .number.precision(.fractionLength(0)))
@@ -351,7 +360,7 @@ private struct CompactUsageStrip: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.white.opacity(0.95))
                     .contentTransition(.numericText(value: usage.primary.remainingPercent))
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: usage.primary.remainingPercent)
+                    .animation(reduceMotion ? nil : HUDMotion.value, value: usage.primary.remainingPercent)
                 Text("%")
                     .font(.system(size: 10 * textScale, weight: .black, design: .monospaced))
                     .foregroundStyle(accent)
@@ -425,9 +434,9 @@ private struct ProviderCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let kind: ProviderKind
     let state: ProviderState
+    let status: ProviderVisualStatus
     let compact: Bool
     let notice: String?
-    let isStale: Bool
     let lastSuccess: Date?
     let nextRefresh: Date?
     let accent: Color
@@ -445,12 +454,17 @@ private struct ProviderCard: View {
                     .tracking(1.3)
                     .foregroundStyle(accent)
                 Spacer()
-                if isStale, let notice {
+                if status == .live {
+                    LiveBadge(accent: accent, textScale: textScale)
+                        .transition(.statusBadge)
+                }
+                if status == .stale, let notice {
                     Text("STALE")
                         .font(.system(size: 8 * textScale, weight: .black, design: .monospaced))
                         .tracking(0.8)
-                        .foregroundStyle(Color(red: 1, green: 0.76, blue: 0.32))
+                        .foregroundStyle(HUDStatusPalette.amber)
                         .help(notice)
+                        .transition(.statusBadge)
                 } else if let plan = state.usage?.plan, !compact {
                     Text(plan.uppercased())
                         .font(.system(size: 8 * textScale, weight: .bold, design: .monospaced))
@@ -459,13 +473,15 @@ private struct ProviderCard: View {
                 }
             }
 
+            // Loading, loaded, and failed hand over through a blur-fade so a
+            // state change reads as the card resolving, not flickering.
             switch state {
             case .loading:
-                loading
+                loading.transition(.blurFade(radius: 4).combined(with: .opacity))
             case let .failed(message):
-                failure(message)
+                failure(message).transition(.blurFade(radius: 4).combined(with: .opacity))
             case let .loaded(usage):
-                loaded(usage)
+                loaded(usage).transition(.blurFade(radius: 4).combined(with: .opacity))
             }
 
             if !compact {
@@ -482,6 +498,8 @@ private struct ProviderCard: View {
                 )
             }
         }
+        .animation(reduceMotion ? nil : HUDMotion.detail, value: state)
+        .animation(reduceMotion ? nil : HUDMotion.detail, value: status)
         .padding(compact ? 10 : 12)
         .frame(maxWidth: .infinity, minHeight: compact ? 76 : 158, maxHeight: .infinity, alignment: .topLeading)
         .background(
@@ -513,7 +531,7 @@ private struct ProviderCard: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.white.opacity(0.94))
                     .contentTransition(.numericText(value: usage.primary.remainingPercent))
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: usage.primary.remainingPercent)
+                    .animation(reduceMotion ? nil : HUDMotion.value, value: usage.primary.remainingPercent)
                 Text("%")
                     .font(.system(size: (compact ? 12 : 14) * textScale, weight: .bold, design: .monospaced))
                     .foregroundStyle(accent)
@@ -636,7 +654,7 @@ private struct UsageBar: View {
             if reduceMotion {
                 displayedRemaining = newValue
             } else {
-                withAnimation(.smooth(duration: 0.65)) { displayedRemaining = newValue }
+                withAnimation(HUDMotion.value) { displayedRemaining = newValue }
             }
         }
         .accessibilityLabel("\(Int(remaining.rounded())) percent remaining")

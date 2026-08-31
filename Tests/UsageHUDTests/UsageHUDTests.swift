@@ -341,6 +341,120 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertNil(ClaudeCooldownPersistence.load(from: defaults))
     }
 
+    func testProviderPollAttemptsPersistPerProvider() throws {
+        let suiteName = "UsageHUDTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let attempt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertNil(ProviderPollPersistence.lastAttempt(for: .claude, from: defaults))
+        ProviderPollPersistence.recordAttempt(for: .claude, at: attempt, to: defaults)
+        XCTAssertEqual(ProviderPollPersistence.lastAttempt(for: .claude, from: defaults), attempt)
+        // Providers keep independent records, so Claude's poll never delays Kimi's.
+        XCTAssertNil(ProviderPollPersistence.lastAttempt(for: .kimi, from: defaults))
+    }
+
+    func testStartupPollWaitsOutTheRemainderOfThePollingInterval() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        // First-ever launch polls immediately.
+        XCTAssertEqual(ProviderPollPersistence.startupDelay(lastAttempt: nil, interval: 300, now: now), 0)
+        // A relaunch mid-interval waits out the remainder instead of bursting.
+        XCTAssertEqual(
+            ProviderPollPersistence.startupDelay(lastAttempt: now.addingTimeInterval(-100), interval: 300, now: now),
+            200
+        )
+        // A relaunch after the interval has fully elapsed polls immediately.
+        XCTAssertEqual(
+            ProviderPollPersistence.startupDelay(lastAttempt: now.addingTimeInterval(-300), interval: 300, now: now),
+            0
+        )
+        // A last attempt in the future (clock change) waits a full interval
+        // rather than computing an even longer delay.
+        XCTAssertEqual(
+            ProviderPollPersistence.startupDelay(lastAttempt: now.addingTimeInterval(600), interval: 300, now: now),
+            300
+        )
+    }
+
+    func testProviderVisualStatusSpeaksOneVocabularyForEverySurface() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let usage = ProviderUsage(
+            kind: .claude,
+            plan: nil,
+            primary: UsageWindow(label: "5h window", usedPercent: 40, resetsAt: nil),
+            secondary: nil,
+            fetchedAt: now,
+            source: .providerAPI
+        )
+        let liveUsage = ProviderUsage(
+            kind: .claude,
+            plan: nil,
+            primary: usage.primary,
+            secondary: nil,
+            fetchedAt: now,
+            source: .liveSession
+        )
+        let cooldown = now.addingTimeInterval(600)
+
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .loading, isStale: false, cooldownUntil: nil, now: now),
+            .loading
+        )
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .loaded(usage), isStale: false, cooldownUntil: nil, now: now),
+            .fresh
+        )
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .loaded(liveUsage), isStale: false, cooldownUntil: nil, now: now),
+            .live
+        )
+        // A stale cache outranks its live source: the user must know the data
+        // stopped moving.
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .loaded(liveUsage), isStale: true, cooldownUntil: nil, now: now),
+            .stale
+        )
+        // Rate limited with nothing cached counts down instead of erroring…
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .failed("cooling"), isStale: false, cooldownUntil: cooldown, now: now),
+            .cooling(until: cooldown)
+        )
+        // …but an expired cooldown is just a failure again.
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .failed("x"), isStale: false, cooldownUntil: now, now: now),
+            .error
+        )
+        XCTAssertEqual(
+            ProviderVisualStatus.status(state: .failed("x"), isStale: false, cooldownUntil: nil, now: now),
+            .error
+        )
+    }
+
+    func testBreathPhaseStaysInUnitRangeAndCycles() {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        for step in 0..<48 {
+            let phase = HUDMotion.breath(start.addingTimeInterval(Double(step) * 0.1))
+            XCTAssertGreaterThanOrEqual(phase, 0)
+            XCTAssertLessThanOrEqual(phase, 1)
+        }
+        // One full period returns to the same phase, so every indicator in the
+        // app breathes in sync no matter when it appeared.
+        XCTAssertEqual(
+            HUDMotion.breath(start),
+            HUDMotion.breath(start.addingTimeInterval(2.4)),
+            accuracy: 0.0001
+        )
+    }
+
+    func testClaudeRotationGraceIsShortRelativeToTheRequestTimeout() {
+        // The grace must be long enough for Claude Code's Keychain write to
+        // land but short enough that a poll still finishes well inside the
+        // scheduler's expectations (each request already has a 10s timeout).
+        XCTAssertGreaterThan(ClaudeUsageProvider.rotationGrace, 0)
+        XCTAssertLessThanOrEqual(ClaudeUsageProvider.rotationGrace, 5)
+    }
+
     func testUsageTimingFormatting() {
         let now = Date(timeIntervalSince1970: 10_000)
         XCTAssertEqual(UsageFormatting.updatedStatusText(for: nil, now: now), "UPDATED —")
@@ -924,6 +1038,13 @@ final class UsageHUDTests: XCTestCase {
         guard let codex = ExecutableLocator.find("codex") else {
             throw XCTSkip("Codex is not installed on this test host")
         }
+        let resolved = URL(fileURLWithPath: codex).resolvingSymlinksInPath()
+        let head = (try? FileHandle(forReadingFrom: resolved).read(upToCount: 64)).flatMap {
+            String(data: $0, encoding: .utf8)
+        } ?? ""
+        guard head.hasPrefix("#!"), head.contains("node") else {
+            throw XCTSkip("Codex is a standalone binary here, not an NVM node launcher")
+        }
         let directory = URL(fileURLWithPath: codex).deletingLastPathComponent().path
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: "\(directory)/node"))
     }
@@ -1327,8 +1448,8 @@ final class UsageHUDTests: XCTestCase {
         let notch = hardwareNotch()
         let widths = (1...3).map { NotchGeometry.expandedWidth(notch: notch, providerCount: $0) }
 
-        // Opening the detail must not make the panel breathe sideways, so one
-        // width has to cover every state.
+        // At rest a handful of rings share one width, so toggling providers
+        // does not make the tray breathe sideways.
         XCTAssertEqual(Set(widths).count, 1)
         XCTAssertGreaterThanOrEqual(widths[0], NotchGeometry.minimumExpandedWidth)
         XCTAssertGreaterThanOrEqual(widths[0], notch.width)
@@ -1345,14 +1466,22 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertGreaterThan(roomy, NotchGeometry.minimumExpandedWidth)
     }
 
-    func testDetailGrowsWithTheNumberOfUsageWindows() {
-        let one = NotchGeometry.detailHeight(windowCount: 1)
-        let two = NotchGeometry.detailHeight(windowCount: 2)
+    func testTrayWidthAlreadyFitsTheSwappedInDetailSoHoverNeverResizesIt() {
+        let notch = hardwareNotch()
 
-        XCTAssertLessThan(one, two)
-        XCTAssertEqual(two - one, NotchGeometry.detailRowHeight + NotchGeometry.detailSpacing)
-        // A provider reporting nothing still has to leave a drawable section.
-        XCTAssertEqual(NotchGeometry.detailHeight(windowCount: 0), one)
+        // Hover swaps content inside one silhouette: whatever the provider
+        // count, the open width must already hold the detail layout.
+        for count in 1...8 {
+            XCTAssertGreaterThanOrEqual(
+                NotchGeometry.expandedWidth(notch: notch, providerCount: count),
+                NotchGeometry.trayHorizontalPadding * 2 + NotchGeometry.detailTileWidth
+            )
+        }
+        // And the detail leaves usable room for the bars beside the ring.
+        XCTAssertGreaterThan(
+            NotchGeometry.detailTileWidth - NotchGeometry.tileWidth - NotchGeometry.detailInnerSpacing,
+            120
+        )
     }
 
     func testPanelIsSizedForTheTallestStateAndStaysFlushWithTheScreenTop() {
@@ -1364,11 +1493,9 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(frame.maxY, bounds.maxY)
         XCTAssertEqual(frame.maxY, notchedScreenFrame.maxY)
         XCTAssertEqual(frame.midX, bounds.midX)
-        // The window never resizes, so it has to already fit the open detail.
-        XCTAssertGreaterThanOrEqual(
-            frame.height,
-            bounds.height + NotchGeometry.detailHeight(windowCount: 2)
-        )
+        // The window never resizes, and the tray never grows past its shelf
+        // in any state, so shelf plus shadow room is all it needs.
+        XCTAssertGreaterThanOrEqual(frame.height, bounds.height)
         XCTAssertEqual(frame.width, bounds.width + NotchGeometry.shadowPadding * 2)
     }
 
@@ -1399,20 +1526,36 @@ final class UsageHUDTests: XCTestCase {
         let zone = NotchGeometry.stayZone(shelfBounds: bounds)
 
         XCTAssertTrue(zone.contains(CGPoint(x: bounds.minX - 5, y: bounds.minY - 5)))
-        XCTAssertFalse(zone.contains(CGPoint(x: bounds.minX - 20, y: bounds.midY)))
-        // Sideways slack stays tight so the tray is not sticky.
+        XCTAssertFalse(zone.contains(CGPoint(x: bounds.minX - NotchGeometry.stayZoneSlack - 1, y: bounds.midY)))
+        // Downward slack stays tight — nothing opens below the ring row now.
+        XCTAssertEqual(zone.height, bounds.height + NotchGeometry.stayZoneSlack * 2)
+    }
+
+    func testStayZoneIsSlackOnlyNowThatTheTrayNeverGrows() {
+        let bounds = NotchGeometry.shelfBounds(notch: hardwareNotch(), providerCount: 3)
+        let zone = NotchGeometry.stayZone(shelfBounds: bounds)
+
+        // Hover swaps content without resizing the shape, so the zone needs
+        // no sideways reach beyond forgiveness for a shaky hand.
+        XCTAssertTrue(zone.contains(CGPoint(x: bounds.minX - NotchGeometry.stayZoneSlack + 1, y: bounds.midY)))
+        XCTAssertTrue(zone.contains(CGPoint(x: bounds.maxX + NotchGeometry.stayZoneSlack - 1, y: bounds.midY)))
         XCTAssertEqual(zone.width, bounds.width + NotchGeometry.stayZoneSlack * 2)
     }
 
-    func testStayZoneReachesDownOverTheOpenDetail() {
-        let bounds = NotchGeometry.shelfBounds(notch: hardwareNotch(), providerCount: 3)
-        let zone = NotchGeometry.stayZone(shelfBounds: bounds)
-        let detailDepth = NotchGeometry.detailHeight(windowCount: 2)
+    func testPeekedNotchStaysInsideThePanelWindow() {
+        // The peek swells the closed shape; the window never resizes, so the
+        // swollen shape (plus its overhang past the housing) has to already
+        // fit, or the acknowledgement animation would clip mid-swell.
+        let notch = hardwareNotch()
+        let frame = NotchGeometry.panelFrame(notch: notch, providerCount: 1)
+        let peekedWidth = notch.width
+            + NotchGeometry.closedOverhang * 2
+            + NotchGeometry.peekWidthGrowth
+            + NotchGeometry.closedTopRadius * 2
+        let peekedHeight = notch.rect.height + NotchGeometry.peekHeightGrowth
 
-        // The shelf only measures the ring row, so the zone has to reach over
-        // the detail the rings open — otherwise reading it retracts it.
-        XCTAssertTrue(zone.contains(CGPoint(x: bounds.midX, y: bounds.minY - detailDepth / 2)))
-        XCTAssertFalse(zone.contains(CGPoint(x: bounds.midX, y: bounds.minY - detailDepth - 40)))
+        XCTAssertLessThanOrEqual(peekedWidth, frame.width)
+        XCTAssertLessThanOrEqual(peekedHeight, frame.height)
     }
 
     func testNotchModeIsOffUntilItIsTurnedOn() throws {
