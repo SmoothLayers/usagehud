@@ -95,9 +95,9 @@ final class NotchPreviewRender: XCTestCase {
         render("4-detail-claude", expanded: true, hovered: 1, hardware: true)
         render("5-detail-kimi", expanded: true, hovered: 2, hardware: true)
 
-        // Stale styling on film: the desaturated ring and the amber bead on
-        // its track. Rendered last so the healthy shots above double as the
-        // README's notch imagery.
+        // Stale styling on film: the desaturated ring and the amber bead
+        // under its number. Rendered last so the healthy shots above double
+        // as the README's notch imagery.
         store.claudeIsStale = true
         render("6-tray-stale", expanded: true, hovered: nil, hardware: true)
         print("previews written to \(outputDir.path)")
