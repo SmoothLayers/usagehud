@@ -143,8 +143,8 @@ final class UsageHUDTests: XCTestCase {
         settings.setBarThickness(8)
         settings.setCornerRadius(24)
         settings.setCompactLayout(.horizontal)
-        settings.setAccent("63C5FF", provider: .codex)
-        settings.setAccent("F6C85F", provider: .kimi)
+        settings.setAccent("3FB6FF", provider: .codex)
+        settings.setAccent("FFC83D", provider: .kimi)
         settings.setClaudeLiveUsageEnabled(true)
 
         let restored = AppSettings(defaults: defaults)
@@ -168,9 +168,22 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(restored.barThickness, 8)
         XCTAssertEqual(restored.cornerRadius, 24)
         XCTAssertEqual(restored.compactLayout, .horizontal)
-        XCTAssertEqual(restored.codexAccentHex, "63C5FF")
-        XCTAssertEqual(restored.kimiAccentHex, "F6C85F")
+        XCTAssertEqual(restored.codexAccentHex, "3FB6FF")
+        XCTAssertEqual(restored.kimiAccentHex, "FFC83D")
         XCTAssertTrue(restored.claudeLiveUsageEnabled)
+    }
+
+    func testLegacyAccentHexMigratesToCurrentPalette() throws {
+        let suiteName = "UsageHUDTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("F59363", forKey: "claudeAccentHex")
+        defaults.set("63C5FF", forKey: "codexAccentHex")
+
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.claudeAccentHex, "FF8A4A")
+        XCTAssertEqual(settings.codexAccentHex, "3FB6FF")
     }
 
     func testMenuBarUsageFormattingUsesEnabledProvidersAndUnavailableMarker() {

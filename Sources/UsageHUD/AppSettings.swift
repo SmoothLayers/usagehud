@@ -151,11 +151,11 @@ final class AppSettings: ObservableObject {
         barThickness = Self.savedChoice(defaults.double(forKey: Key.barThickness), choices: Self.barThicknessChoices, fallback: 4)
         cornerRadius = Self.savedChoice(defaults.double(forKey: Key.cornerRadius), choices: Self.cornerRadiusChoices, fallback: 14)
         compactLayout = CompactLayout(rawValue: defaults.string(forKey: Key.compactLayout) ?? "") ?? .vertical
-        let savedCodexAccent = defaults.string(forKey: Key.codexAccentHex) ?? HUDAccentPalette.codexDefault
+        let savedCodexAccent = HUDAccentPalette.normalized(defaults.string(forKey: Key.codexAccentHex) ?? HUDAccentPalette.codexDefault)
         codexAccentHex = HUDAccentPalette.choices.contains(savedCodexAccent) ? savedCodexAccent : HUDAccentPalette.codexDefault
-        let savedClaudeAccent = defaults.string(forKey: Key.claudeAccentHex) ?? HUDAccentPalette.claudeDefault
+        let savedClaudeAccent = HUDAccentPalette.normalized(defaults.string(forKey: Key.claudeAccentHex) ?? HUDAccentPalette.claudeDefault)
         claudeAccentHex = HUDAccentPalette.choices.contains(savedClaudeAccent) ? savedClaudeAccent : HUDAccentPalette.claudeDefault
-        let savedKimiAccent = defaults.string(forKey: Key.kimiAccentHex) ?? HUDAccentPalette.kimiDefault
+        let savedKimiAccent = HUDAccentPalette.normalized(defaults.string(forKey: Key.kimiAccentHex) ?? HUDAccentPalette.kimiDefault)
         kimiAccentHex = HUDAccentPalette.choices.contains(savedKimiAccent) ? savedKimiAccent : HUDAccentPalette.kimiDefault
         claudeLiveUsageEnabled = defaults.bool(forKey: Key.claudeLiveUsageEnabled)
         notchModeEnabled = defaults.bool(forKey: Key.notchModeEnabled)
