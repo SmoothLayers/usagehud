@@ -58,9 +58,10 @@ final class NotchPreviewRender: XCTestCase {
                 rect: CGRect(origin: .zero, size: hardwareNotch),
                 isHardware: hardware
             )
-            let width = NotchGeometry.expandedWidth(notch: metrics, providerCount: 3)
+            let theme = settings.notchTheme
+            let width = NotchGeometry.expandedWidth(notch: metrics, providerCount: 3, theme: theme)
                 + NotchGeometry.shadowPadding * 2
-            let height = hardwareNotch.height + NotchGeometry.trayHeight + NotchGeometry.shadowPadding
+            let height = hardwareNotch.height + NotchGeometry.trayHeight(for: theme) + NotchGeometry.shadowPadding
 
             let view = ZStack(alignment: .top) {
                 // Stand-in desktop so shadow and rim can be judged.
@@ -95,11 +96,81 @@ final class NotchPreviewRender: XCTestCase {
         render("4-detail-claude", expanded: true, hovered: 1, hardware: true)
         render("5-detail-kimi", expanded: true, hovered: 2, hardware: true)
 
+        // Every other tray design, at rest and with Claude's detail open.
+        for theme in NotchTheme.allCases where theme != .classic {
+            settings.setNotchTheme(theme)
+            render("7-\(theme.rawValue)-tray", expanded: true, hovered: nil, hardware: true)
+            render("8-\(theme.rawValue)-detail", expanded: true, hovered: 1, hardware: true)
+        }
+        settings.setNotchTheme(.classic)
+
+        // One sheet of all six themes for the README, each shot captioned.
+        composeThemeSheet(in: outputDir)
+
         // Stale styling on film: the desaturated ring and the amber bead
         // under its number. Rendered last so the healthy shots above double
         // as the README's notch imagery.
+        // The matte tray: black behind the icons, no glass and no floor light.
+        settings.setNotchTrayDark(true)
+        render("9-dark-tray", expanded: true, hovered: nil, hardware: true)
+        settings.setNotchTrayDark(false)
+
         store.claudeIsStale = true
         render("6-tray-stale", expanded: true, hovered: nil, hardware: true)
         print("previews written to \(outputDir.path)")
+    }
+
+    /// Tiles the six theme shots into a three-column grid with a caption
+    /// under each, so the README can show every tray design in one image.
+    private func composeThemeSheet(in outputDir: URL) {
+        let shots: [(NotchTheme, String)] = NotchTheme.allCases.map { theme in
+            (theme, theme == .classic ? "3-tray" : "7-\(theme.rawValue)-tray")
+        }
+        let images = shots.compactMap { theme, name -> (NotchTheme, NSImage)? in
+            guard let image = NSImage(contentsOf: outputDir.appendingPathComponent("\(name).png")) else { return nil }
+            return (theme, image)
+        }
+        guard images.count == shots.count else { return }
+
+        let columns = 3
+        let cellWidth: CGFloat = 640
+        let cellHeight: CGFloat = 300
+        let captionHeight: CGFloat = 46
+        let gap: CGFloat = 20
+        let rows = Int(ceil(Double(images.count) / Double(columns)))
+        let width = CGFloat(columns) * cellWidth + CGFloat(columns - 1) * gap
+        let height = CGFloat(rows) * (cellHeight + captionHeight) + CGFloat(rows - 1) * gap
+
+        let sheet = NSImage(size: NSSize(width: width, height: height))
+        sheet.lockFocus()
+        NSColor(calibratedRed: 0.043, green: 0.047, blue: 0.063, alpha: 1).setFill()
+        NSRect(origin: .zero, size: sheet.size).fill()
+        let caption: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 20, weight: .semibold),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.7),
+            .kern: 3
+        ]
+        for (index, (theme, image)) in images.enumerated() {
+            let column = CGFloat(index % columns)
+            let row = CGFloat(rows - 1 - index / columns)
+            let x = column * (cellWidth + gap)
+            let y = row * (cellHeight + captionHeight + gap)
+            // Shots are 2x renders, so filling the cell at their point size
+            // costs no sharpness; keep the aspect ratio and centre them.
+            let drawSize = NSSize(width: image.size.width, height: image.size.height)
+            let scale = min(cellWidth / drawSize.width, cellHeight / drawSize.height)
+            let size = NSSize(width: drawSize.width * scale, height: drawSize.height * scale)
+            let origin = NSPoint(x: x + (cellWidth - size.width) / 2, y: y + captionHeight + (cellHeight - size.height) / 2)
+            image.draw(in: NSRect(origin: origin, size: size))
+            let text = NSAttributedString(string: theme.title, attributes: caption)
+            let textSize = text.size()
+            text.draw(at: NSPoint(x: x + (cellWidth - textSize.width) / 2, y: y + (captionHeight - textSize.height) / 2))
+        }
+        sheet.unlockFocus()
+
+        guard let tiff = sheet.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: outputDir.appendingPathComponent("notch-themes.png"))
     }
 }

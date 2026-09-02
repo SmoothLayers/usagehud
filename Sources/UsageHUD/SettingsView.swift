@@ -182,6 +182,26 @@ struct SettingsView: View {
                     }
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    SettingLabel(title: "NOTCH TRAY", detail: settings.notchTheme.blurb)
+                    HStack(spacing: 6) {
+                        ForEach(NotchTheme.allCases) { theme in
+                            CompactChoiceButton(title: theme.title, selected: settings.notchTheme == theme) {
+                                settings.setNotchTheme(theme)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack {
+                    SettingLabel(title: "DARK TRAY", detail: "Matte black behind the icons instead of glass")
+                    Spacer()
+                    InstrumentToggle(isOn: settings.notchTrayDark, tint: SettingsPalette.kimi) {
+                        settings.setNotchTrayDark(!settings.notchTrayDark)
+                    }
+                }
+
                 HStack {
                     SettingLabel(title: "MENU BAR USAGE", detail: "Show C72 · A39 · K84 beside the gauge")
                     Spacer()
