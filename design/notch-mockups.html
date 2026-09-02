@@ -1,0 +1,713 @@
+<title>Five Trays</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@500;600;700&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --ground: #0B0C10;
+    --panel: #14161C;
+    --line: rgba(255,255,255,.08);
+    --text: #E8E9EE;
+    --muted: #8B8F9C;
+    --dim: #5C6070;
+    --codex: #2EF2A9;
+    --claude: #FF8A4A;
+    --kimi: #9B6DFF;
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SF Mono", Menlo, monospace;
+    --figures: "Manrope", "Helvetica Neue", Arial, sans-serif;
+    --rounded: ui-rounded, "SF Pro Rounded", -apple-system, "Helvetica Neue", sans-serif;
+    --spring: cubic-bezier(.34, 1.28, .48, 1);
+    --ease: cubic-bezier(.2, .7, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font: 400 15px/1.55 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 1160px; margin: 0 auto; padding: 56px 32px 96px; }
+
+  /* ---------- Page chrome ---------- */
+  header { max-width: 640px; margin-bottom: 56px; }
+  .eyebrow {
+    font: 500 11px/1 var(--mono);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font: 600 56px/1 var(--display);
+    letter-spacing: -.02em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  header p { margin: 0 0 10px; color: var(--muted); max-width: 60ch; }
+  .sample {
+    display: inline-flex; gap: 18px; margin-top: 14px;
+    font: 500 12px/1 var(--mono); color: var(--muted);
+  }
+  .sample span::before {
+    content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 7px; background: var(--c); vertical-align: 1px;
+  }
+
+  section.design {
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) 1fr;
+    gap: 40px;
+    padding: 44px 0;
+    border-top: 1px solid var(--line);
+    align-items: start;
+  }
+  .num {
+    font: 500 12px/1 var(--mono);
+    color: var(--dim);
+    letter-spacing: .1em;
+    margin-bottom: 14px;
+  }
+  h2 { font: 600 30px/1.05 var(--display); letter-spacing: -.015em; margin: 0 0 12px; }
+  .thesis { margin: 0 0 20px; color: var(--text); }
+  .spec dl { margin: 0; display: grid; gap: 14px; }
+  .spec dt {
+    font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--dim); margin-bottom: 5px;
+  }
+  .spec dd { margin: 0; color: var(--muted); font-size: 14px; }
+  .spec ul { margin: 0; padding-left: 16px; }
+  .spec li { margin: 3px 0; }
+
+  .stage { position: sticky; top: 24px; }
+  .screen {
+    position: relative; height: 262px; border-radius: 14px; overflow: hidden;
+    background:
+      radial-gradient(110% 80% at 12% 112%, #d8794c 0%, rgba(216,121,76,0) 55%),
+      radial-gradient(80% 70% at 88% 105%, #6a3f9e 0%, rgba(106,63,158,0) 62%),
+      linear-gradient(160deg, #1a2140 0%, #2a2450 52%, #3b2a4a 100%);
+    box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 30px 60px -30px rgba(0,0,0,.8);
+  }
+  .menubar {
+    position: absolute; inset: 0 0 auto 0; height: 34px;
+    background: rgba(8,8,12,.26); backdrop-filter: blur(24px);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 18px;
+    color: rgba(255,255,255,.86); font: 500 12.5px/1 var(--rounded);
+  }
+  .menubar .l, .menubar .r { display: flex; gap: 16px; align-items: center; }
+  .menubar .l b { font-weight: 700; }
+  .menubar svg { width: 14px; height: 14px; fill: currentColor; }
+  .notch {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 230px; height: 34px; background: #000; border-radius: 0 0 12px 12px;
+  }
+  .tray {
+    position: absolute; top: 0; left: 50%;
+    transform: translateX(-50%);
+    transform-origin: 50% 0;
+    background: #000; color: #fff;
+    border-radius: 0 0 28px 28px;
+    padding-top: 34px;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.14) inset,
+      0 -1px 0 rgba(255,255,255,.06) inset,
+      0 2px 3px rgba(0,0,0,.45),
+      0 18px 40px rgba(0,0,0,.55);
+    animation: trayOpen .56s var(--spring) both;
+  }
+  .tray::before, .tray::after {
+    content: ""; position: absolute; top: 0; width: 14px; height: 14px; background: #000;
+  }
+  .tray::before { left: -14px; -webkit-mask: radial-gradient(circle at 0 100%, transparent 13.5px, #000 14px); mask: radial-gradient(circle at 0 100%, transparent 13.5px, #000 14px); }
+  .tray::after  { right: -14px; -webkit-mask: radial-gradient(circle at 100% 100%, transparent 13.5px, #000 14px); mask: radial-gradient(circle at 100% 100%, transparent 13.5px, #000 14px); }
+  .tray-inner { position: relative; animation: innerIn .4s var(--ease) both; }
+  .tray[data-state="detail"] .tray-inner { animation: swapIn .38s var(--ease) both; }
+  @keyframes trayOpen { from { transform: translateX(-50%) scale(.62, .3); } }
+  @keyframes innerIn  { from { opacity: 0; } }
+  @keyframes swapIn   { from { opacity: 0; transform: translateX(10px); filter: blur(5px); } }
+  @keyframes pop      { from { opacity: 0; transform: translateY(-10px) scale(.55); filter: blur(4px); } }
+  @keyframes rise     { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes sweep    { from { stroke-dasharray: 0 100; } }
+  @keyframes breathe  { 0%, 100% { opacity: .55; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
+  @keyframes shimmer  { from { transform: translateX(-140%) skewX(-18deg); } to { transform: translateX(240%) skewX(-18deg); } }
+
+  .controls { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+  button.replay {
+    font: 500 12px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 14px; cursor: pointer;
+  }
+  button.replay:hover { border-color: rgba(255,255,255,.2); }
+  button.replay:focus-visible { outline: 2px solid var(--codex); outline-offset: 2px; }
+  .hint { font-size: 12.5px; color: var(--dim); }
+
+  .tile { --i: 0; animation: pop .55s var(--spring) both; animation-delay: calc(var(--i) * 70ms + 200ms); cursor: default; }
+  .live {
+    display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--c);
+    box-shadow: 0 0 6px var(--c); animation: breathe 2.4s ease-in-out infinite;
+  }
+  .glyph { display: block; fill: currentColor; }
+  .caps { font: 500 8.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,.42); }
+  .tab { font-variant-numeric: tabular-nums; }
+
+  /* ---------- 1. Instrument ---------- */
+  .d1 .tray { width: 410px; }
+  .d1 .row { display: flex; justify-content: center; gap: 4px; padding: 10px 16px 14px; }
+  .d1 .tile { width: 98px; display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .d1 .ring { position: relative; width: 60px; height: 60px; }
+  .d1 .ring svg { position: absolute; inset: 0; overflow: visible; }
+  .d1 .ring .g { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.92); }
+  .d1 .ring .g svg { width: 21px; height: 21px; position: static; }
+  .d1 .fig { font: 500 14px/1 var(--mono); color: rgba(255,255,255,.9); display: flex; align-items: baseline; gap: 1px; }
+  .d1 .fig small { font-size: 9px; color: rgba(255,255,255,.4); }
+  .d1 .name { display: flex; gap: 6px; align-items: center; }
+  .d1 .detail { display: flex; gap: 20px; align-items: center; padding: 12px 22px 16px 18px; height: 122px; }
+  .d1 .detail .rows { flex: 1; display: grid; gap: 12px; }
+  .d1 .drow { animation: rise .4s var(--ease) both; }
+  .d1 .drow:nth-child(2) { animation-delay: 60ms; }
+  .d1 .drow .lab { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+  .d1 .drow .lab .v { font: 500 11px/1 var(--mono); color: rgba(255,255,255,.62); }
+  .d1 .drow .lab .v b { color: #fff; font-weight: 600; }
+  .d1 .scale { position: relative; height: 8px; }
+  .d1 .scale .track { position: absolute; left: 0; right: 0; top: 3px; height: 1px; background: rgba(255,255,255,.14); }
+  .d1 .scale .tick { position: absolute; top: 0; width: 1px; height: 7px; background: rgba(255,255,255,.16); }
+  .d1 .scale .fill { position: absolute; left: 0; top: 2.5px; height: 2px; background: var(--c); border-radius: 1px; width: var(--w); box-shadow: 0 0 6px var(--c); transition: width .9s var(--ease); }
+  .d1 .scale .fill::after { content: ""; position: absolute; right: -2px; top: -1.5px; width: 5px; height: 5px; border-radius: 50%; background: #fff; box-shadow: 0 0 6px var(--c); }
+
+  /* ---------- 2. Capsule ---------- */
+  .d2 .tray { width: 424px; }
+  .d2 .row { display: flex; gap: 8px; padding: 10px 14px 14px; height: 94px; }
+  .d2 .pill {
+    --i: 0;
+    position: relative; flex: 1 1 0; min-width: 48px; height: 46px; border-radius: 23px;
+    background: rgba(255,255,255,.065);
+    box-shadow: 0 1px 0 rgba(255,255,255,.1) inset, 0 0 0 1px rgba(255,255,255,.05) inset;
+    display: flex; align-items: center; gap: 10px; padding: 0 10px 0 9px; overflow: hidden;
+    animation: pop .55s var(--spring) both; animation-delay: calc(var(--i) * 70ms + 200ms);
+    transition: flex .42s var(--spring), opacity .3s, box-shadow .3s; cursor: default;
+  }
+  .d2 .pill .orb {
+    flex: none; width: 28px; height: 28px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--c) 42%, transparent), color-mix(in srgb, var(--c) 14%, transparent));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 30%, transparent) inset;
+    display: grid; place-items: center; color: #fff;
+  }
+  .d2 .pill .orb svg { width: 14px; height: 14px; }
+  .d2 .pill .body { min-width: 0; display: grid; gap: 4px; }
+  .d2 .pill .fig { font: 600 15px/1 var(--rounded); letter-spacing: -.01em; white-space: nowrap; display: flex; align-items: center; }
+  .d2 .pill .fig .live { margin-left: 6px; }
+  .d2 .bar { height: 2.5px; width: 52px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .d2 .bar i { display: block; height: 100%; width: var(--w); background: var(--c); border-radius: 2px; box-shadow: 0 0 6px var(--c); transition: width .9s var(--ease); }
+  .d2 .row[data-focus] .pill:not(.on) { flex: 0 0 46px; padding: 0 9px; opacity: .55; }
+  .d2 .row[data-focus] .pill:not(.on) .body { opacity: 0; }
+  .d2 .pill.on { flex: 4 1 0; box-shadow: 0 1px 0 rgba(255,255,255,.14) inset, 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent) inset, 0 0 26px color-mix(in srgb, var(--c) 22%, transparent); }
+  .d2 .pill.on .body { flex: 1; grid-template-columns: auto 1fr; column-gap: 14px; align-items: center; animation: swapIn .36s var(--ease) both; }
+  .d2 .pill.on .meta { display: grid; gap: 5px; }
+  .d2 .pill.on .meta .r { display: grid; grid-template-columns: 46px 1fr auto; gap: 8px; align-items: center; font: 500 10px/1 var(--rounded); color: rgba(255,255,255,.55); white-space: nowrap; }
+  .d2 .pill.on .meta .r b { color: rgba(255,255,255,.9); }
+  .d2 .pill.on .meta .bar { width: auto; }
+  .d2 .pill::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent); animation: shimmer 1.1s var(--ease) 1 both; animation-delay: calc(var(--i) * 70ms + 420ms); pointer-events: none; }
+
+  /* ---------- 3. Concentric ---------- */
+  .d3 .tray { width: 400px; }
+  .d3 .wrap { display: flex; align-items: center; gap: 18px; padding: 10px 20px 14px 18px; height: 122px; }
+  .d3 .gauge { position: relative; width: 96px; height: 96px; flex: none; }
+  .d3 .gauge svg { position: absolute; inset: 0; overflow: visible; }
+  .d3 .gauge circle { transition: opacity .3s, stroke-width .3s; }
+  .d3 .gauge .center { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; }
+  .d3 .gauge .center svg { position: static; width: 18px; height: 18px; }
+  .d3 .gauge .dots { display: flex; gap: 4px; }
+  .d3 .gauge .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--c); box-shadow: 0 0 5px var(--c); }
+  .d3 .legend { flex: 1; display: grid; gap: 4px; }
+  .d3 .lrow {
+    --i: 0;
+    display: grid; grid-template-columns: 10px 1fr auto 44px; align-items: center; gap: 10px;
+    height: 26px; padding: 0 9px; border-radius: 9px; cursor: default;
+    animation: pop .5s var(--spring) both; animation-delay: calc(var(--i) * 70ms + 220ms);
+    transition: height .36s var(--spring), background .25s;
+  }
+  .d3 .lrow.on { background: rgba(255,255,255,.06); height: 42px; grid-template-rows: auto auto; row-gap: 1px; }
+  .d3 .legend[data-focus] .lrow:not(.on) { height: 22px; opacity: .45; }
+  .d3 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+  .d3 .lrow.on .dot { grid-row: 1 / 3; }
+  .d3 .n { font: 600 12px/1 var(--rounded); color: rgba(255,255,255,.9); }
+  .d3 .p { font: 600 13px/1 var(--rounded); letter-spacing: -.01em; }
+  .d3 .mini { height: 3px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .d3 .mini i { display: block; height: 100%; width: var(--w); background: var(--c); border-radius: 2px; transition: width .9s var(--ease); }
+  .d3 .sub { grid-column: 2 / 5; font: 500 10px/1 var(--rounded); color: rgba(255,255,255,.5); white-space: nowrap; animation: rise .3s var(--ease) both; }
+  .d3 .sub b { color: rgba(255,255,255,.85); font-weight: 600; }
+
+  /* ---------- 4. Ledger ---------- */
+  .d4 .tray { width: 430px; }
+  .d4 .cols { display: flex; padding: 10px 14px 14px; height: 112px; }
+  .d4 .col {
+    --i: 0;
+    flex: 1 1 0; min-width: 0; padding: 4px 16px 0; position: relative;
+    display: flex; flex-direction: column; justify-content: space-between;
+    animation: rise .5s var(--ease) both; animation-delay: calc(var(--i) * 70ms + 200ms);
+    transition: flex .42s var(--spring), opacity .3s; cursor: default;
+  }
+  .d4 .col + .col::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 1px; background: rgba(255,255,255,.09); }
+  .d4 .cols[data-focus] .col:not(.on) { flex: .55 1 0; opacity: .4; }
+  .d4 .col.on { flex: 2.4 1 0; }
+  .d4 .head { display: flex; align-items: center; gap: 7px; }
+  .d4 .head .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--c); box-shadow: 0 0 6px var(--c); }
+  .d4 .big { display: flex; align-items: baseline; gap: 14px; }
+  .d4 .fig { font: 600 36px/1 var(--figures); letter-spacing: -.045em; white-space: nowrap; }
+  .d4 .fig small { font: 500 12px/1 var(--figures); color: rgba(255,255,255,.4); margin-left: 2px; letter-spacing: 0; }
+  .d4 .aside { display: none; font: 500 10.5px/1.5 var(--sans); color: rgba(255,255,255,.5); white-space: nowrap; animation: swapIn .36s var(--ease) both; }
+  .d4 .aside b { color: rgba(255,255,255,.88); font-weight: 600; }
+  .d4 .col.on .aside { display: block; }
+  .d4 .lines { display: grid; gap: 5px; }
+  .d4 .hair { position: relative; height: 1.5px; background: rgba(255,255,255,.1); border-radius: 1px; }
+  .d4 .hair i { position: absolute; left: 0; top: 0; height: 100%; width: var(--w); background: var(--c); border-radius: 1px; box-shadow: 0 0 5px var(--c); transition: width .9s var(--ease); }
+  .d4 .hair.w { display: none; }
+  .d4 .col.on .hair.w { display: block; animation: rise .3s var(--ease) both; }
+  .d4 .col.on .hair.w i { opacity: .6; }
+
+  /* ---------- 5. Segmented ---------- */
+  .d5 .tray { width: 410px; }
+  .d5 .row { display: flex; justify-content: center; gap: 4px; padding: 10px 16px 14px; }
+  .d5 .tile { width: 98px; display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .d5 .ring { position: relative; width: 60px; height: 60px; }
+  .d5 .ring svg { position: absolute; inset: 0; overflow: visible; }
+  .d5 .ring .g { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.92); }
+  .d5 .ring .g svg { width: 20px; height: 20px; position: static; }
+  .d5 .fig { font: 600 13px/1 var(--mono); color: rgba(255,255,255,.9); display: flex; align-items: baseline; gap: 4px; }
+  .d5 .fig small { font-size: 8px; font-weight: 500; color: rgba(255,255,255,.4); letter-spacing: .1em; }
+  .d5 .detail { display: flex; gap: 20px; align-items: center; padding: 12px 22px 16px 18px; height: 122px; }
+  .d5 .detail .rows { flex: 1; display: grid; gap: 12px; }
+  .d5 .drow { animation: rise .4s var(--ease) both; }
+  .d5 .drow:nth-child(2) { animation-delay: 60ms; }
+  .d5 .drow .lab { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .d5 .drow .lab .v { font: 500 10.5px/1 var(--mono); color: rgba(255,255,255,.55); }
+  .d5 .drow .lab .v b { color: #fff; font-weight: 600; }
+  .d5 .cells { display: flex; gap: 2px; }
+  .d5 .cells i { flex: 1; height: 6px; border-radius: 1.5px; background: rgba(255,255,255,.1); }
+  .d5 .cells i.lit { background: var(--c); box-shadow: 0 0 5px color-mix(in srgb, var(--c) 60%, transparent); }
+  .d5 .cells i.lit.edge { background: #fff; }
+
+  footer { border-top: 1px solid var(--line); padding-top: 32px; color: var(--muted); max-width: 60ch; }
+  footer b { color: var(--text); font-weight: 600; }
+
+  @media (max-width: 860px) {
+    section.design { grid-template-columns: 1fr; }
+    .stage { position: static; }
+    h1 { font-size: 40px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001s !important; animation-delay: 0s !important; transition-duration: .001s !important; }
+  }
+</style>
+
+<main>
+  <header>
+    <p class="eyebrow">Usage HUD · Notch tray</p>
+    <h1>Five Trays</h1>
+    <p>Five directions for the tray that drops out of the notch. Each is a working mock: hover a provider to open its detail, move off the tray to close it, and press Replay to run the entrance again.</p>
+    <p>All five show the same sample data so the comparison is fair.</p>
+    <div class="sample">
+      <span style="--c: var(--codex)">Codex 5%</span>
+      <span style="--c: var(--claude)">Claude 63% · live</span>
+      <span style="--c: var(--kimi)">Kimi 87%</span>
+    </div>
+  </header>
+
+  <section class="design d1" data-design="instrument">
+    <div class="spec">
+      <div class="num">01</div>
+      <h2>Instrument</h2>
+      <p class="thesis">A watch dial, not a chart. Hairline rings on a tick track, monospaced figures, the provider named in small capitals underneath.</p>
+      <dl>
+        <dt>Why it feels premium</dt>
+        <dd><ul>
+          <li>Sixty ticks around each ring give the arc a scale to be read against, like a bezel.</li>
+          <li>Numerals are set in a real monospaced face, so 5, 63 and 87 line up to the pixel.</li>
+          <li>Nothing glows at rest. Colour is the one thing moving.</li>
+        </ul></dd>
+        <dt>Motion</dt>
+        <dd>Arcs sweep in over 900 ms while the figures count up beneath them. The detail keeps the ring and unfolds two scaled hairlines with quarter ticks.</dd>
+        <dt>Risk</dt>
+        <dd>Quietest of the five. If you want the tray to be noticed, this is not the one.</dd>
+      </dl>
+    </div>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="controls"><button class="replay" type="button">Replay</button><span class="hint">Hover a ring for its detail</span></div>
+    </div>
+  </section>
+
+  <section class="design d2" data-design="capsule">
+    <div class="spec">
+      <div class="num">02</div>
+      <h2>Capsule</h2>
+      <p class="thesis">Three glass pills in the tray, the way Dynamic Island holds live activities. The hovered pill swallows the row.</p>
+      <dl>
+        <dt>Why it feels premium</dt>
+        <dd><ul>
+          <li>Frosted pills with an inner top highlight read as material, not flat fills.</li>
+          <li>The provider mark sits in a tinted orb, so each pill carries its colour without a ring.</li>
+          <li>Hover is a morph, not a swap: the pill grows and the others fold to orbs.</li>
+        </ul></dd>
+        <dt>Motion</dt>
+        <dd>Pills pop in with a stagger and a single light sweep crosses each. Focus is a spring on the pill's width, so the whole row rearranges in one motion.</dd>
+        <dt>Risk</dt>
+        <dd>Closest to Apple's own vocabulary, which reads as familiar or derivative depending on the customer.</dd>
+      </dl>
+    </div>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="controls"><button class="replay" type="button">Replay</button><span class="hint">Hover a pill for its detail</span></div>
+    </div>
+  </section>
+
+  <section class="design d3" data-design="concentric">
+    <div class="spec">
+      <div class="num">03</div>
+      <h2>Concentric</h2>
+      <p class="thesis">One gauge, three nested arcs, a legend beside it. The most compact reading of all three providers at once.</p>
+      <dl>
+        <dt>Why it feels premium</dt>
+        <dd><ul>
+          <li>A single object on the left and a typeset list on the right: a composed layout, not three copies of a tile.</li>
+          <li>Arcs open at the bottom like a speedometer, so the empty part of the ring says something.</li>
+          <li>Focus dims the other arcs instead of hiding them, so context stays on screen.</li>
+        </ul></dd>
+        <dt>Motion</dt>
+        <dd>Arcs sweep outer to inner while legend rows slide in from the right. Hover swells the row and lifts its arc; the gauge centre takes the provider mark.</dd>
+        <dt>Risk</dt>
+        <dd>Inner arcs are short, so a low inner value reads smaller than the same value on the outer ring.</dd>
+      </dl>
+    </div>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="controls"><button class="replay" type="button">Replay</button><span class="hint">Hover a legend row</span></div>
+    </div>
+  </section>
+
+  <section class="design d4" data-design="ledger">
+    <div class="spec">
+      <div class="num">04</div>
+      <h2>Ledger</h2>
+      <p class="thesis">No rings. The number is the design: three large figures set in columns, a hairline of progress under each.</p>
+      <dl>
+        <dt>Why it feels premium</dt>
+        <dd><ul>
+          <li>Big tabular figures with tight tracking are the most legible reading from across a desk.</li>
+          <li>Hairline dividers and a single dot of colour per column keep it near monochrome.</li>
+          <li>It looks like a display on a piece of Braun equipment, not a widget.</li>
+        </ul></dd>
+        <dt>Motion</dt>
+        <dd>Figures count up and hairlines draw. Hover widens the column, the neighbours recede, and the week line appears under the session line.</dd>
+        <dt>Risk</dt>
+        <dd>Drops the provider marks; the columns are told apart by name and colour only.</dd>
+      </dl>
+    </div>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="controls"><button class="replay" type="button">Replay</button><span class="hint">Hover a column</span></div>
+    </div>
+  </section>
+
+  <section class="design d5" data-design="segmented">
+    <div class="spec">
+      <div class="num">05</div>
+      <h2>Segmented</h2>
+      <p class="thesis">Rings built from discrete cells that light up one by one, like a level meter on studio gear. Progress you can count.</p>
+      <dl>
+        <dt>Why it feels premium</dt>
+        <dd><ul>
+          <li>Twenty-eight cells per ring make the fill feel measured rather than painted.</li>
+          <li>The last lit cell is white, a hot edge that marks exactly where you stand.</li>
+          <li>Detail bars use the same cells, so ring and bar are one system.</li>
+        </ul></dd>
+        <dt>Motion</dt>
+        <dd>Cells light in sequence at 24 per second, a stepped fill instead of a smooth sweep. Hover keeps the ring and unfolds two cell bars beside it.</dd>
+        <dt>Risk</dt>
+        <dd>The most technical look. Reads as pro hardware, which may be too much for a casual user.</dd>
+      </dl>
+    </div>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="controls"><button class="replay" type="button">Replay</button><span class="hint">Hover a ring for its detail</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <p><b>Reply with a number</b> and I will build it in SwiftUI. Mixing is fine: the rings from 05 with the detail from 03, or the Ledger figures inside the Capsule pills.</p>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const GLYPH = {
+    codex: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+    claude: "m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z",
+    kimi: "M21.765.351C22.998.351 24 1.353 24 2.586S22.998 4.82 21.765 4.82h-1.974c-.15 0-.26-.12-.26-.26V2.586A2.237 2.237 0 0 1 21.765.35M9.41 13.388l8.447-8.377c.16-.16.07-.471-.14-.471h-4.55s-.1.02-.14.06l-9.099 9.029c-.14.14-.35.02-.35-.21V4.81c0-.15-.1-.27-.221-.27H.22c-.12 0-.22.12-.22.27v18.57c0 .15.1.27.22.27h3.137c.12 0 .22-.12.22-.27v-3.79c0-.08.03-.16.08-.21l2.826-2.796c.07-.07.16-.08.241-.03l7.546 5.551a8.9 8.9 0 0 0 4.018 1.493c.12.01.23-.11.23-.27V19.76c0-.14-.08-.25-.19-.26a5.8 5.8 0 0 1-2.355-.942l-6.533-4.73c-.14-.09-.15-.32-.03-.441"
+  };
+
+  const P = [
+    { id: "codex",  name: "Codex",  c: "#2EF2A9", session: 5,  week: 41,   sReset: "2h 36m", wReset: "3d 11h", live: false },
+    { id: "claude", name: "Claude", c: "#FF8A4A", session: 63, week: 78,   sReset: "1h 15m", wReset: "4d 20h", live: true  },
+    { id: "kimi",   name: "Kimi",   c: "#9B6DFF", session: 87, week: null, sReset: "14h 26m", wReset: null,    live: false }
+  ];
+
+  const glyph = (id) => `<svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="${GLYPH[id]}"/></svg>`;
+  const live = (p) => p.live ? `<i class="live" style="--c:${p.c}" title="Live session"></i>` : "";
+  const menubar = () => `
+    <div class="menubar">
+      <div class="l"><svg viewBox="0 0 24 24"><path d="M16.4 12.7c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.8 1.3 10.3.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8s2 .8 3.4.8 2.3-1.3 3.1-2.5c1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4.2zM13.9 5c.7-.9 1.2-2 1-3.2-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.2.1 2.4-.6 3.1-1.5z"/></svg><b>Finder</b><span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span><span>Help</span></div>
+      <div class="r"><span>100%</span><span>Tue 4:49 PM</span></div>
+    </div>
+    <div class="notch"></div>`;
+
+  // Count a figure up from zero after its tile has landed.
+  function countUp(root, delayBase = 320) {
+    root.querySelectorAll("[data-count]").forEach((el) => {
+      const to = +el.dataset.count, i = +(el.dataset.i || 0);
+      const start = performance.now() + delayBase + i * 70, dur = 900;
+      el.textContent = "0";
+      const tick = (t) => {
+        const k = Math.min(1, Math.max(0, (t - start) / dur));
+        const e = 1 - Math.pow(1 - k, 3);
+        el.textContent = Math.round(to * e);
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  // SVG helpers -------------------------------------------------------------
+  const arc = (r, pct, color, w, delay, extra = "") =>
+    `<circle cx="50%" cy="50%" r="${r}" pathLength="100" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round"
+      stroke-dasharray="${pct} 100" transform="rotate(-90 30 30)" style="animation: sweep .9s var(--ease) both; animation-delay:${delay}ms" ${extra}/>`;
+
+  function instrumentRing(p, i) {
+    const r = 27;
+    const tip = pct => {
+      const a = (pct / 100) * 2 * Math.PI - Math.PI / 2;
+      return { x: 30 + r * Math.cos(a), y: 30 + r * Math.sin(a) };
+    };
+    const t = tip(p.session);
+    return `<div class="ring" style="--c:${p.c}">
+      <svg viewBox="0 0 60 60">
+        <circle cx="30" cy="30" r="29" pathLength="60" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1.5" stroke-dasharray="0.08 0.92" stroke-dashoffset="0.04"/>
+        <circle cx="30" cy="30" r="${r}" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="1"/>
+        ${arc(r, p.session, p.c, 1.75, 160 + i * 70)}
+        <circle cx="${t.x.toFixed(2)}" cy="${t.y.toFixed(2)}" r="1.9" fill="#fff" style="filter: drop-shadow(0 0 3px ${p.c}); opacity:0; animation: innerIn .3s ${1000 + i * 70}ms both"/>
+      </svg>
+      <div class="g">${glyph(p.id)}</div>
+    </div>`;
+  }
+
+  function segRing(p, i) {
+    const N = 28, lit = Math.round(N * p.session / 100);
+    const seg = (n, cls) => `<circle class="${cls}" cx="30" cy="30" r="27" pathLength="${N}" fill="none" stroke-width="3.2"
+      stroke-dasharray="${Array.from({ length: n }, () => "0.7 0.3").join(" ")} 0 ${N}" transform="rotate(-90 30 30)"/>`;
+    return `<div class="ring" style="--c:${p.c}" data-lit="${lit}" data-i="${i}">
+      <svg viewBox="0 0 60 60">
+        ${seg(N, "dim").replace('class="dim"', 'stroke="rgba(255,255,255,.11)"')}
+        <g class="litg" data-n="0" style="filter: drop-shadow(0 0 3px ${p.c})">${seg(0, "lit").replace('class="lit"', `stroke="${p.c}"`)}</g>
+        <g class="edgeg">${seg(0, "edge").replace('class="edge"', 'stroke="#fff"')}</g>
+      </svg>
+      <div class="g">${glyph(p.id)}</div>
+    </div>`;
+  }
+  function runSegments(root) {
+    root.querySelectorAll(".ring[data-lit]").forEach((ring) => {
+      const N = 28, target = +ring.dataset.lit, i = +ring.dataset.i;
+      const litC = ring.querySelector(".litg circle"), edgeC = ring.querySelector(".edgeg circle");
+      const dash = (n) => `${Array.from({ length: n }, () => "0.7 0.3").join(" ")} 0 ${N}`;
+      const edge = (n) => n ? `${"0 1 ".repeat(n - 1)}0.7 0.3 0 ${N}` : `0 ${N}`;
+      let n = 0;
+      const step = () => {
+        n++;
+        litC.setAttribute("stroke-dasharray", dash(n));
+        edgeC.setAttribute("stroke-dasharray", edge(n));
+        if (n < target) setTimeout(step, 1000 / 24);
+      };
+      setTimeout(step, 320 + i * 90);
+    });
+  }
+  const cells = (pct, c, N = 20) => {
+    const lit = Math.round(N * pct / 100);
+    return `<div class="cells" style="--c:${c}">${Array.from({ length: N }, (_, k) =>
+      `<i class="${k < lit ? "lit" : ""}${k === lit - 1 ? " edge" : ""}" style="animation: innerIn .2s both; animation-delay:${120 + k * 22}ms"></i>`).join("")}</div>`;
+  };
+
+  // Designs -----------------------------------------------------------------
+  const D = {};
+
+  D.instrument = {
+    row: () => `<div class="row">${P.map((p, i) => `
+      <div class="tile" data-p="${p.id}" style="--i:${i}">
+        ${instrumentRing(p, i)}
+        <div class="fig tab"><span data-count="${p.session}" data-i="${i}">0</span><small>%</small></div>
+        <div class="name caps" style="--c:${p.c}">${p.name}${live(p)}</div>
+      </div>`).join("")}</div>`,
+    detail: (p) => {
+      const scale = (pct, c) => `<div class="scale" style="--c:${c};--w:${pct}%">
+        <div class="track"></div>${[0, 25, 50, 75, 100].map(t => `<div class="tick" style="left:${t}%"></div>`).join("")}<div class="fill"></div></div>`;
+      const row = (t, pct, reset) => `<div class="drow"><div class="lab"><span class="caps">${t}</span><span class="v tab"><b>${pct}%</b> · ${reset} left</span></div>${scale(pct, p.c)}</div>`;
+      return `<div class="detail">
+        <div class="tile" data-p="${p.id}" style="animation:none">${instrumentRing(p, 0)}<div class="name caps" style="--c:${p.c}">${p.name}${live(p)}</div></div>
+        <div class="rows">${row("Session", p.session, p.sReset)}${p.week != null ? row("Week", p.week, p.wReset) : `<div class="drow caps" style="color:rgba(255,255,255,.3)">No weekly window</div>`}</div>
+      </div>`;
+    }
+  };
+
+  D.capsule = {
+    // One tree for both states: the pills morph in place.
+    row: () => `<div class="row">${P.map((p, i) => `
+      <div class="pill" data-p="${p.id}" style="--c:${p.c};--i:${i}">
+        <div class="orb">${glyph(p.id)}</div>
+        <div class="body">
+          <div class="fig tab"><span data-count="${p.session}" data-i="${i}">0</span>%${live(p)}</div>
+          <div class="bar"><i style="--w:${p.session}%"></i></div>
+        </div>
+      </div>`).join("")}</div>`,
+    focus: (tray, id) => {
+      const row = tray.querySelector(".row");
+      row.querySelectorAll(".pill").forEach((pill) => {
+        const p = P.find(x => x.id === pill.dataset.p);
+        const on = id && p.id === id;
+        pill.classList.toggle("on", on);
+        pill.querySelector(".body").innerHTML = on
+          ? `<div class="fig tab">${p.session}%${live(p)}</div>
+             <div class="meta">
+               <div class="r"><span>Session</span><div class="bar"><i style="--w:${p.session}%"></i></div><b>${p.sReset}</b></div>
+               ${p.week != null ? `<div class="r"><span>Week</span><div class="bar"><i style="--w:${p.week}%"></i></div><b>${p.wReset}</b></div>` : `<div class="r"><span>Week</span><span style="opacity:.6">no window</span><span></span></div>`}
+             </div>`
+          : `<div class="fig tab">${p.session}%${live(p)}</div><div class="bar"><i style="--w:${p.session}%"></i></div>`;
+      });
+      if (id) row.dataset.focus = id; else delete row.dataset.focus;
+    }
+  };
+
+  D.concentric = {
+    row: () => {
+      const radii = [40, 32, 24];
+      const gauge = P.map((p, i) => `
+        <circle cx="48" cy="48" r="${radii[i]}" pathLength="100" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="4" stroke-linecap="round" stroke-dasharray="75 100" transform="rotate(135 48 48)"/>
+        <circle data-arc="${p.id}" cx="48" cy="48" r="${radii[i]}" pathLength="100" fill="none" stroke="${p.c}" stroke-width="4" stroke-linecap="round"
+          stroke-dasharray="${(p.session * .75).toFixed(2)} 100" transform="rotate(135 48 48)" style="animation: sweep .95s var(--ease) both; animation-delay:${180 + i * 110}ms; filter: drop-shadow(0 0 3px color-mix(in srgb, ${p.c} 55%, transparent))"/>`).join("");
+      return `<div class="wrap">
+        <div class="gauge"><svg viewBox="0 0 96 96">${gauge}</svg>
+          <div class="center"><div class="dots">${P.map(p => `<i style="--c:${p.c}"></i>`).join("")}</div></div>
+        </div>
+        <div class="legend">${P.map((p, i) => `
+          <div class="lrow" data-p="${p.id}" style="--c:${p.c};--i:${i}">
+            <div class="dot"></div>
+            <div class="n">${p.name} ${live(p)}</div>
+            <div class="p tab"><span data-count="${p.session}" data-i="${i}">0</span>%</div>
+            <div class="mini"><i style="--w:${p.session}%"></i></div>
+          </div>`).join("")}</div>
+      </div>`;
+    },
+    focus: (tray, id) => {
+      const legend = tray.querySelector(".legend");
+      const center = tray.querySelector(".center");
+      tray.querySelectorAll("[data-arc]").forEach((c) => {
+        c.style.opacity = id && c.dataset.arc !== id ? .25 : 1;
+        c.setAttribute("stroke-width", id && c.dataset.arc === id ? 5 : 4);
+      });
+      legend.querySelectorAll(".lrow").forEach((r) => {
+        const p = P.find(x => x.id === r.dataset.p);
+        const on = id && p.id === id;
+        r.classList.toggle("on", on);
+        r.querySelector(".sub")?.remove();
+        if (on) r.insertAdjacentHTML("beforeend", `<div class="sub tab">Session resets in <b>${p.sReset}</b>${p.week != null ? ` · Week <b>${p.week}%</b> · ${p.wReset}` : ""}</div>`);
+      });
+      if (id) { legend.dataset.focus = id; const p = P.find(x => x.id === id); center.innerHTML = glyph(p.id); center.style.color = "#fff"; }
+      else { delete legend.dataset.focus; center.innerHTML = `<div class="dots">${P.map(p => `<i style="--c:${p.c}"></i>`).join("")}</div>`; }
+    }
+  };
+
+  D.ledger = {
+    row: () => `<div class="cols">${P.map((p, i) => `
+      <div class="col" data-p="${p.id}" style="--c:${p.c};--i:${i}">
+        <div class="head"><span class="dot"></span><span class="caps">${p.name}</span>${live(p)}</div>
+        <div class="big">
+          <div class="fig tab"><span data-count="${p.session}" data-i="${i}">0</span><small>%</small></div>
+          <div class="aside tab">Session · <b>${p.sReset}</b> left<br>${p.week != null ? `Week <b>${p.week}%</b> · ${p.wReset}` : `<span style="opacity:.6">No weekly window</span>`}</div>
+        </div>
+        <div class="lines">
+          <div class="hair s"><i style="--w:${p.session}%"></i></div>
+          <div class="hair w"><i style="--w:${p.week ?? 0}%"></i></div>
+        </div>
+      </div>`).join("")}</div>`,
+    focus: (tray, id) => {
+      const cols = tray.querySelector(".cols");
+      cols.querySelectorAll(".col").forEach(c => c.classList.toggle("on", !!id && c.dataset.p === id));
+      if (id) cols.dataset.focus = id; else delete cols.dataset.focus;
+    }
+  };
+
+  D.segmented = {
+    row: () => `<div class="row">${P.map((p, i) => `
+      <div class="tile" data-p="${p.id}" style="--i:${i}">
+        ${segRing(p, i)}
+        <div class="fig tab"><span data-count="${p.session}" data-i="${i}">0</span><small>PCT</small>${live(p)}</div>
+      </div>`).join("")}</div>`,
+    detail: (p) => {
+      const row = (t, pct, reset) => `<div class="drow"><div class="lab"><span class="caps">${t}</span><span class="v tab"><b>${pct}%</b> · ${reset}</span></div>${cells(pct, p.c)}</div>`;
+      const ring = segRing(p, 0).replace('data-lit=', 'data-static data-lit=');
+      return `<div class="detail">
+        <div class="tile" data-p="${p.id}" style="animation:none">${ring}<div class="fig tab">${p.session}<small>PCT</small>${live(p)}</div></div>
+        <div class="rows">${row("Session", p.session, p.sReset + " left")}${p.week != null ? row("Week", p.week, p.wReset + " left") : `<div class="drow caps" style="color:rgba(255,255,255,.3)">No weekly window</div>`}</div>
+      </div>`;
+    },
+    after: (root) => {
+      // Static rings in the detail start fully lit; the row rings step up.
+      root.querySelectorAll(".ring[data-static]").forEach((ring) => {
+        const N = 28, n = +ring.dataset.lit;
+        ring.querySelector(".litg circle").setAttribute("stroke-dasharray", `${Array.from({ length: n }, () => "0.7 0.3").join(" ")} 0 ${N}`);
+        ring.querySelector(".edgeg circle").setAttribute("stroke-dasharray", n ? `${"0 1 ".repeat(n - 1)}0.7 0.3 0 ${N}` : `0 ${N}`);
+        ring.removeAttribute("data-lit");
+      });
+      runSegments(root);
+    }
+  };
+
+  // Mount ---------------------------------------------------------------------
+  function mount(section) {
+    const design = D[section.dataset.design];
+    const screen = section.querySelector(".screen");
+    screen.innerHTML = `${menubar()}<div class="tray" data-state="row"><div class="tray-inner">${design.row()}</div></div>`;
+    const tray = screen.querySelector(".tray");
+    countUp(tray);
+    design.after?.(tray);
+
+    let current = null;
+    const setFocus = (id) => {
+      if (id === current) return;
+      current = id;
+      if (design.focus) { design.focus(tray, id); return; }
+      const inner = tray.querySelector(".tray-inner");
+      tray.dataset.state = id ? "detail" : "row";
+      if (id) {
+        inner.innerHTML = design.detail(P.find(p => p.id === id));
+        design.after?.(tray);
+      } else {
+        inner.innerHTML = design.row();
+        inner.querySelectorAll(".tile, .pill, .lrow, .col").forEach(t => t.style.animation = "none");
+        inner.querySelectorAll("[data-count]").forEach(el => el.textContent = el.dataset.count);
+        inner.querySelectorAll("circle[style]").forEach(c => c.style.animation = "none");
+        design.after?.(tray);
+      }
+      inner.style.animation = "none"; void inner.offsetWidth; inner.style.animation = "";
+    };
+    tray.addEventListener("mouseover", (e) => {
+      const t = e.target.closest("[data-p]");
+      if (t) setFocus(t.dataset.p);
+    });
+    tray.addEventListener("mouseleave", () => setFocus(null));
+  }
+
+  document.querySelectorAll("section.design").forEach((section) => {
+    mount(section);
+    section.querySelector(".replay").addEventListener("click", () => mount(section));
+  });
+})();
+</script>

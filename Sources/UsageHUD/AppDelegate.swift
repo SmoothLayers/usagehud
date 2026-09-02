@@ -236,6 +236,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.applyUpdateSettings()
             case .layout:
                 self.resizePanel(compact: self.store.isCompact)
+            case .notchTheme:
+                // Each tray design needs a different amount of room.
+                self.notchController.refreshLayout()
             case .sizing:
                 self.resizePanel(compact: self.store.isCompact)
             case .timers:

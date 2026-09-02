@@ -9,6 +9,7 @@ enum AppSettingsChange {
     case interaction
     case updates
     case layout
+    case notchTheme
     case sizing
     case timers
     case claudeLiveUsage
@@ -47,6 +48,8 @@ final class AppSettings: ObservableObject {
     @Published private(set) var kimiAccentHex: String
     @Published private(set) var claudeLiveUsageEnabled: Bool
     @Published private(set) var notchModeEnabled: Bool
+    @Published private(set) var notchTheme: NotchTheme
+    @Published private(set) var notchTrayDark: Bool
     /// The user's intent, not the system's state: login-item registrations
     /// silently go stale when the app is rebuilt or moved, so this is the
     /// truth the app re-asserts against `SMAppService` on every launch.
@@ -80,6 +83,8 @@ final class AppSettings: ObservableObject {
         static let kimiAccentHex = "kimiAccentHex"
         static let claudeLiveUsageEnabled = "claudeLiveUsageEnabled"
         static let notchModeEnabled = "notchModeEnabled"
+        static let notchTheme = "notchTheme"
+        static let notchTrayDark = "notchTrayDark"
         static let launchAtLogin = "launchAtLogin"
     }
 
@@ -159,6 +164,8 @@ final class AppSettings: ObservableObject {
         kimiAccentHex = HUDAccentPalette.choices.contains(savedKimiAccent) ? savedKimiAccent : HUDAccentPalette.kimiDefault
         claudeLiveUsageEnabled = defaults.bool(forKey: Key.claudeLiveUsageEnabled)
         notchModeEnabled = defaults.bool(forKey: Key.notchModeEnabled)
+        notchTheme = NotchTheme(rawValue: defaults.string(forKey: Key.notchTheme) ?? "") ?? .classic
+        notchTrayDark = defaults.bool(forKey: Key.notchTrayDark)
         launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
     }
 
@@ -272,6 +279,20 @@ final class AppSettings: ObservableObject {
         notchModeEnabled = enabled
         defaults.set(enabled, forKey: Key.notchModeEnabled)
         changed?(.notch)
+    }
+
+    func setNotchTheme(_ theme: NotchTheme) {
+        guard notchTheme != theme else { return }
+        notchTheme = theme
+        defaults.set(theme.rawValue, forKey: Key.notchTheme)
+        changed?(.notchTheme)
+    }
+
+    func setNotchTrayDark(_ dark: Bool) {
+        guard notchTrayDark != dark else { return }
+        notchTrayDark = dark
+        defaults.set(dark, forKey: Key.notchTrayDark)
+        changed?(.notchTheme)
     }
 
     static let allowedAlertThresholds = [0, 5, 10, 15, 20, 25, 30]

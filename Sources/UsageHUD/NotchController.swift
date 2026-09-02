@@ -145,8 +145,9 @@ final class NotchController {
         let screenNumber = screen.displayNumber
         let notch = screen.notchMetrics
         let providerCount = max(1, settings.visibleProviderCount)
+        let theme = settings.notchTheme
         let frame = clamped(
-            NotchGeometry.panelFrame(notch: notch, providerCount: providerCount),
+            NotchGeometry.panelFrame(notch: notch, providerCount: providerCount, theme: theme),
             to: screen.frame
         )
 
@@ -155,7 +156,7 @@ final class NotchController {
         activeScreenNumber = screenNumber
         currentNotch = notch
         currentPanelFrame = frame
-        currentShelfBounds = NotchGeometry.shelfBounds(notch: notch, providerCount: providerCount)
+        currentShelfBounds = NotchGeometry.shelfBounds(notch: notch, providerCount: providerCount, theme: theme)
         panel.setFrame(frame, display: true)
         notchState.notchSize = notch.rect.size
         notchState.isHardwareNotch = notch.isHardware
@@ -278,12 +279,38 @@ final class NotchController {
         collapseWork = nil
     }
 
+    /// Design-iteration aid: with `NotchDebugCapturePath` set in defaults,
+    /// writes a PNG of the open panel — this window only, as composited —
+    /// so its rendering can be inspected without screen-recording access.
+    private func scheduleDebugCapture() {
+        guard let path = UserDefaults.standard.string(forKey: "NotchDebugCapturePath"), !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, let panel = self.panel, self.notchState.isExpanded else { return }
+            let windowID = CGWindowID(panel.windowNumber)
+            guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, windowID, [.boundsIgnoreFraming, .bestResolution]) else {
+                AppLog.info("notch", "Debug capture failed: no image")
+                return
+            }
+            let rep = NSBitmapImageRep(cgImage: image)
+            guard let png = rep.representation(using: .png, properties: [:]) else { return }
+            do {
+                try png.write(to: URL(fileURLWithPath: path))
+                AppLog.info("notch", "Debug capture written path=\(path) size=\(image.width)x\(image.height)")
+            } catch {
+                AppLog.info("notch", "Debug capture failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func setExpanded(_ expanded: Bool) {
         guard notchState.isExpanded != expanded else { return }
         // Only claim the pointer while the shelf is out; collapsed it must stay
         // out of the way of the menu bar.
         panel?.ignoresMouseEvents = !expanded
-        if expanded { panel?.orderFrontRegardless() }
+        if expanded {
+            panel?.orderFrontRegardless()
+            scheduleDebugCapture()
+        }
 
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             notchState.isExpanded = expanded

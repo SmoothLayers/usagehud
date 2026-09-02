@@ -57,7 +57,9 @@ enum NotchGeometry {
     static let hotZoneTopOvershoot: CGFloat = 4
     static let stayZoneSlack: CGFloat = 10
     /// Room left around the tray inside the window so its shadow can render.
-    static let shadowPadding: CGFloat = 26
+    /// Must comfortably exceed the tray's shadow blur: a shadow that is still
+    /// visible where the window ends gets cut off in a hard-edged rectangle.
+    static let shadowPadding: CGFloat = 40
 
     static var tileHeight: CGFloat { ringDiameter + ringToPercentGap + percentHeight }
 
@@ -118,13 +120,8 @@ enum NotchGeometry {
     /// The one width every open state shares. Sized for whichever needs more
     /// room — the ring row or the swapped-in detail — so hovering never makes
     /// the shape breathe.
-    static func expandedWidth(notch: Notch, providerCount: Int) -> CGFloat {
-        let count = max(1, providerCount)
-        let trayContent = trayHorizontalPadding * 2
-            + tileWidth * CGFloat(count)
-            + tileSpacing * CGFloat(count - 1)
-        let detailContent = trayHorizontalPadding * 2 + detailTileWidth
-        return max(max(notch.width, max(trayContent, detailContent)), minimumExpandedWidth)
+    static func expandedWidth(notch: Notch, providerCount: Int, theme: NotchTheme = .classic) -> CGFloat {
+        max(max(notch.width, theme.contentWidth(providerCount: providerCount)), minimumExpandedWidth)
     }
 
     /// Height of the ring row, excluding the notch strip it hangs from. The
@@ -133,10 +130,15 @@ enum NotchGeometry {
         trayTopPadding + tileHeight + trayBottomPadding
     }
 
+    /// The same, for whichever tray design is selected.
+    static func trayHeight(for theme: NotchTheme) -> CGFloat {
+        theme.trayHeight
+    }
+
     /// The shelf at rest: notch strip plus the ring row.
-    static func shelfBounds(notch: Notch, providerCount: Int) -> CGRect {
-        let width = expandedWidth(notch: notch, providerCount: providerCount)
-        let height = notch.height + trayHeight
+    static func shelfBounds(notch: Notch, providerCount: Int, theme: NotchTheme = .classic) -> CGRect {
+        let width = expandedWidth(notch: notch, providerCount: providerCount, theme: theme)
+        let height = notch.height + trayHeight(for: theme)
         return CGRect(
             x: notch.rect.midX - width / 2,
             y: notch.rect.maxY - height,
@@ -149,8 +151,8 @@ enum NotchGeometry {
     /// the shape without the window resizing, plus room for the shadow. The
     /// top edge stays flush with the screen, where there is nothing to cast
     /// onto.
-    static func panelFrame(notch: Notch, providerCount: Int) -> CGRect {
-        let bounds = shelfBounds(notch: notch, providerCount: providerCount)
+    static func panelFrame(notch: Notch, providerCount: Int, theme: NotchTheme = .classic) -> CGRect {
+        let bounds = shelfBounds(notch: notch, providerCount: providerCount, theme: theme)
         let width = bounds.width + shadowPadding * 2
         let height = bounds.height + shadowPadding
         return CGRect(
