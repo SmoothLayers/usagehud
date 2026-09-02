@@ -25,6 +25,18 @@ you run low or a window resets.
 Everything runs on your Mac. No server, no account, no analytics, no separate API key. It reuses
 the CLI sign-ins you already have.
 
+## Highlights
+
+- **Three ways to look.** A full HUD with a card per provider, a compact strip mode, and a
+  notch tray that drops down when you point at the camera housing.
+- **Six tray themes.** Classic rings, an instrument dial, glass capsules, a concentric gauge, a
+  typographic ledger, or segmented cells. Pick one in Settings, on glass or matte black.
+- **Live countdowns.** Every window shows the time to its reset, and the menu bar can read
+  `C72 · A39 · K84` next to the gauge.
+- **Alerts.** Notifications when a provider runs low and when a window resets.
+- **Private by design.** No server, no account, no analytics. Credentials only ever go to
+  each provider's own usage endpoint.
+
 ## Install
 
 1. Download the zip from the [latest release](https://github.com/SmoothLayers/usagehud/releases/latest)
@@ -59,8 +71,9 @@ requests and chains an existing `ccstatusline` setup instead of replacing it.
 
 ## Notch mode
 
-Turn on Notch Mode and the HUD gets a second home. Point at the camera housing and a tray slides
-out from under it with a gauge ring per provider. Move away and it retracts.
+Turn on Notch Mode and the HUD gets a second home. Point at the camera housing and the notch
+wakes with a hairline of provider colour, then a tray slides out from under it with a gauge per
+provider. Move away and it retracts.
 
 <div align="center">
 <img src="artifacts/notch-tray.png" alt="The notch tray expanded, showing Codex, Claude, and Kimi rings with remaining percentages" width="500">
@@ -73,6 +86,27 @@ zone at the top centre of the screen.
 <div align="center">
 <img src="artifacts/notch-detail.png" alt="The notch tray with the Claude ring hovered, showing session and weekly bars with reset countdowns" width="500">
 </div>
+
+### Tray themes
+
+The tray comes in six designs. Settings → Display → Notch Tray switches between them, and the
+tray resizes to fit whichever you pick.
+
+<div align="center">
+<img src="artifacts/notch-themes.png" alt="The six notch tray themes: Classic, Instrument, Capsule, Concentric, Ledger, and Segmented" width="900">
+</div>
+
+| Theme | The idea |
+|-------|----------|
+| Classic | Glowing arcs on lit ring faces, the percent underneath |
+| Instrument | Hairline dials on a tick track with monospaced figures, like a watch face |
+| Capsule | Three glass pills; hover one and it grows across the row while the others fold to their marks |
+| Concentric | One gauge of nested arcs with a legend beside it, the most compact read of all three |
+| Ledger | No rings: large figures in hairline columns with a line of progress under each |
+| Segmented | Rings of discrete cells that light up one by one, the last one white |
+
+**Dark Tray**, just below the theme picker, swaps the glass material for matte black behind the
+icons, the same black as the housing itself.
 
 ## Compact mode
 

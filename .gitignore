@@ -10,3 +10,4 @@ artifacts/*
 !artifacts/compact-horizontal.png
 !artifacts/notch-tray.png
 !artifacts/notch-detail.png
+!artifacts/notch-themes.png
