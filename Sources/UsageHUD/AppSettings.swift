@@ -14,6 +14,7 @@ enum AppSettingsChange {
     case timers
     case claudeLiveUsage
     case notch
+    case claudeWindowSchedule
 }
 
 final class AppSettings: ObservableObject {
@@ -23,6 +24,9 @@ final class AppSettings: ObservableObject {
     static let defaultCodexPollingInterval: TimeInterval = 2 * 60
     static let defaultClaudePollingInterval: TimeInterval = 5 * 60
     static let defaultKimiPollingInterval: TimeInterval = 5 * 60
+    static let claudeWindowScheduleTimeChoices = Array(stride(from: 0, to: 24 * 60, by: 30))
+    static let defaultClaudeWindowStartMinutes = 8 * 60
+    static let defaultClaudeWindowEndMinutes = 23 * 60
 
     @Published private(set) var codexPollingInterval: TimeInterval
     @Published private(set) var claudePollingInterval: TimeInterval
@@ -54,6 +58,9 @@ final class AppSettings: ObservableObject {
     /// silently go stale when the app is rebuilt or moved, so this is the
     /// truth the app re-asserts against `SMAppService` on every launch.
     @Published private(set) var launchAtLogin: Bool
+    @Published private(set) var claudeWindowScheduleEnabled: Bool
+    @Published private(set) var claudeWindowStartMinutes: Int
+    @Published private(set) var claudeWindowEndMinutes: Int
 
     var changed: ((AppSettingsChange) -> Void)?
 
@@ -86,6 +93,9 @@ final class AppSettings: ObservableObject {
         static let notchTheme = "notchTheme"
         static let notchTrayDark = "notchTrayDark"
         static let launchAtLogin = "launchAtLogin"
+        static let claudeWindowScheduleEnabled = "claudeWindowScheduleEnabled"
+        static let claudeWindowStartMinutes = "claudeWindowStartMinutes"
+        static let claudeWindowEndMinutes = "claudeWindowEndMinutes"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -167,6 +177,19 @@ final class AppSettings: ObservableObject {
         notchTheme = NotchTheme(rawValue: defaults.string(forKey: Key.notchTheme) ?? "") ?? .classic
         notchTrayDark = defaults.bool(forKey: Key.notchTrayDark)
         launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
+        claudeWindowScheduleEnabled = defaults.bool(forKey: Key.claudeWindowScheduleEnabled)
+        claudeWindowStartMinutes = Self.savedScheduleMinutes(
+            defaults.object(forKey: Key.claudeWindowStartMinutes) == nil
+                ? Self.defaultClaudeWindowStartMinutes
+                : defaults.integer(forKey: Key.claudeWindowStartMinutes),
+            fallback: Self.defaultClaudeWindowStartMinutes
+        )
+        claudeWindowEndMinutes = Self.savedScheduleMinutes(
+            defaults.object(forKey: Key.claudeWindowEndMinutes) == nil
+                ? Self.defaultClaudeWindowEndMinutes
+                : defaults.integer(forKey: Key.claudeWindowEndMinutes),
+            fallback: Self.defaultClaudeWindowEndMinutes
+        )
     }
 
     var visibleProviderCount: Int {
@@ -295,6 +318,27 @@ final class AppSettings: ObservableObject {
         changed?(.notchTheme)
     }
 
+    func setClaudeWindowScheduleEnabled(_ enabled: Bool) {
+        guard claudeWindowScheduleEnabled != enabled else { return }
+        claudeWindowScheduleEnabled = enabled
+        defaults.set(enabled, forKey: Key.claudeWindowScheduleEnabled)
+        changed?(.claudeWindowSchedule)
+    }
+
+    func setClaudeWindowStartMinutes(_ minutes: Int) {
+        guard Self.claudeWindowScheduleTimeChoices.contains(minutes), claudeWindowStartMinutes != minutes else { return }
+        claudeWindowStartMinutes = minutes
+        defaults.set(minutes, forKey: Key.claudeWindowStartMinutes)
+        changed?(.claudeWindowSchedule)
+    }
+
+    func setClaudeWindowEndMinutes(_ minutes: Int) {
+        guard Self.claudeWindowScheduleTimeChoices.contains(minutes), claudeWindowEndMinutes != minutes else { return }
+        claudeWindowEndMinutes = minutes
+        defaults.set(minutes, forKey: Key.claudeWindowEndMinutes)
+        changed?(.claudeWindowSchedule)
+    }
+
     static let allowedAlertThresholds = [0, 5, 10, 15, 20, 25, 30]
     static let textScaleChoices: [Double] = [0.85, 1, 1.15, 1.3]
     static let barThicknessChoices: [Double] = [3, 4, 6, 8]
@@ -408,5 +452,9 @@ final class AppSettings: ObservableObject {
 
     private static func savedChoice(_ value: Double, choices: [Double], fallback: Double) -> Double {
         choices.contains(value) ? value : fallback
+    }
+
+    private static func savedScheduleMinutes(_ value: Int, fallback: Int) -> Int {
+        claudeWindowScheduleTimeChoices.contains(value) ? value : fallback
     }
 }

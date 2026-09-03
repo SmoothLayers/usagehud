@@ -34,6 +34,9 @@ the CLI sign-ins you already have.
 - **Live countdowns.** Every window shows the time to its reset, and the menu bar can read
   `C72 · A39 · K84` next to the gauge.
 - **Alerts.** Notifications when a provider runs low and when a window resets.
+- **Claude window scheduler.** Opt in and the app sends one tiny prompt to Claude Code right after
+  each 5-hour window resets, inside hours you choose, so a fresh window is already running when
+  you sit down. There is a Start Now button too.
 - **Private by design.** No server, no account, no analytics. Credentials only ever go to
   each provider's own usage endpoint.
 

@@ -123,6 +123,9 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(settings.codexAccentHex, HUDAccentPalette.codexDefault)
         XCTAssertEqual(settings.kimiAccentHex, HUDAccentPalette.kimiDefault)
         XCTAssertFalse(settings.claudeLiveUsageEnabled)
+        XCTAssertFalse(settings.claudeWindowScheduleEnabled)
+        XCTAssertEqual(settings.claudeWindowStartMinutes, 8 * 60)
+        XCTAssertEqual(settings.claudeWindowEndMinutes, 23 * 60)
 
         settings.setCodexPollingInterval(600)
         settings.setClaudePollingInterval(900)
@@ -146,6 +149,9 @@ final class UsageHUDTests: XCTestCase {
         settings.setAccent("3FB6FF", provider: .codex)
         settings.setAccent("FFC83D", provider: .kimi)
         settings.setClaudeLiveUsageEnabled(true)
+        settings.setClaudeWindowScheduleEnabled(true)
+        settings.setClaudeWindowStartMinutes(7 * 60 + 30)
+        settings.setClaudeWindowEndMinutes(22 * 60)
 
         let restored = AppSettings(defaults: defaults)
         XCTAssertEqual(restored.codexPollingInterval, 600)
@@ -171,6 +177,9 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(restored.codexAccentHex, "3FB6FF")
         XCTAssertEqual(restored.kimiAccentHex, "FFC83D")
         XCTAssertTrue(restored.claudeLiveUsageEnabled)
+        XCTAssertTrue(restored.claudeWindowScheduleEnabled)
+        XCTAssertEqual(restored.claudeWindowStartMinutes, 7 * 60 + 30)
+        XCTAssertEqual(restored.claudeWindowEndMinutes, 22 * 60)
     }
 
     func testLegacyAccentHexMigratesToCurrentPalette() throws {
@@ -1319,6 +1328,110 @@ final class UsageHUDTests: XCTestCase {
     func testClaudeRetryAfterSeconds() {
         XCTAssertEqual(ClaudeUsageProvider.parseRetryAfter("125"), 125)
         XCTAssertNil(ClaudeUsageProvider.parseRetryAfter("0"))
+    }
+
+    func testClaudeWindowActivationUsesRestrictedHeadlessArguments() {
+        let arguments = ClaudeWindowActivator.arguments
+
+        XCTAssertTrue(arguments.contains("-p"))
+        XCTAssertTrue(arguments.contains("--no-session-persistence"))
+        XCTAssertTrue(arguments.contains("--strict-mcp-config"))
+        XCTAssertTrue(arguments.contains("--disable-slash-commands"))
+        XCTAssertTrue(arguments.contains("--no-chrome"))
+        XCTAssertTrue(arguments.contains("dontAsk"))
+        XCTAssertTrue(arguments.contains("sonnet"))
+        XCTAssertTrue(arguments.contains("low"))
+        XCTAssertFalse(arguments.contains("--system-prompt"))
+        XCTAssertFalse(arguments.contains("--dangerously-skip-permissions"))
+
+        let toolsIndex = try? XCTUnwrap(arguments.firstIndex(of: "--tools"))
+        XCTAssertEqual(toolsIndex.map { arguments[$0 + 1] }, "")
+        let settingSourcesIndex = try? XCTUnwrap(arguments.firstIndex(of: "--setting-sources"))
+        XCTAssertEqual(settingSourcesIndex.map { arguments[$0 + 1] }, "")
+    }
+
+    func testClaudeWindowActivationOnlyStartsWithoutAnActiveWindow() {
+        let now = Date(timeIntervalSince1970: 1_785_200_000)
+
+        XCTAssertTrue(ClaudeWindowActivationEligibility.canStart(
+            resetsAt: nil, isRunning: false, isAwaitingConfirmation: false, now: now
+        ))
+        XCTAssertTrue(ClaudeWindowActivationEligibility.canStart(
+            resetsAt: now.addingTimeInterval(-1), isRunning: false, isAwaitingConfirmation: false, now: now
+        ))
+        XCTAssertFalse(ClaudeWindowActivationEligibility.canStart(
+            resetsAt: now.addingTimeInterval(300), isRunning: false, isAwaitingConfirmation: false, now: now
+        ))
+        XCTAssertFalse(ClaudeWindowActivationEligibility.canStart(
+            resetsAt: nil, isRunning: true, isAwaitingConfirmation: false, now: now
+        ))
+        XCTAssertFalse(ClaudeWindowActivationEligibility.canStart(
+            resetsAt: nil, isRunning: false, isAwaitingConfirmation: true, now: now
+        ))
+    }
+
+    func testClaudeWindowActivationEstimatePersistsUntilItExpires() throws {
+        let suiteName = "UsageHUDTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let now = Date(timeIntervalSince1970: 1_785_200_000)
+        let resetAt = now.addingTimeInterval(ClaudeWindowActivationPersistence.windowDuration)
+
+        ClaudeWindowActivationPersistence.save(resetAt, to: defaults)
+        XCTAssertEqual(
+            ClaudeWindowActivationPersistence.load(from: defaults, now: now),
+            resetAt
+        )
+        XCTAssertNil(
+            ClaudeWindowActivationPersistence.load(
+                from: defaults,
+                now: resetAt.addingTimeInterval(1)
+            )
+        )
+    }
+
+    func testClaudeWindowScheduleSupportsDaytimeAndOvernightHours() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let morning = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 28, hour: 9
+        )))
+        let lateNight = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 28, hour: 23
+        )))
+
+        XCTAssertTrue(ClaudeWindowSchedule.isActive(
+            at: morning, startMinutes: 8 * 60, endMinutes: 23 * 60, calendar: calendar
+        ))
+        XCTAssertFalse(ClaudeWindowSchedule.isActive(
+            at: lateNight, startMinutes: 8 * 60, endMinutes: 23 * 60, calendar: calendar
+        ))
+        XCTAssertTrue(ClaudeWindowSchedule.isActive(
+            at: lateNight, startMinutes: 22 * 60, endMinutes: 6 * 60, calendar: calendar
+        ))
+        XCTAssertFalse(ClaudeWindowSchedule.isActive(
+            at: morning, startMinutes: 22 * 60, endMinutes: 6 * 60, calendar: calendar
+        ))
+    }
+
+    func testClaudeWindowScheduleFindsNextActiveStart() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let lateNight = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 28, hour: 23, minute: 30
+        )))
+        let expected = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 29, hour: 8
+        )))
+
+        XCTAssertEqual(
+            ClaudeWindowSchedule.nextActiveStart(
+                after: lateNight,
+                startMinutes: 8 * 60,
+                calendar: calendar
+            ),
+            expected
+        )
     }
 
     func testClaudeRetryAfterHTTPDate() throws {

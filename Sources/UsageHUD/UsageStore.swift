@@ -58,6 +58,15 @@ enum ClaudeFreshness {
     }
 }
 
+enum ClaudeWindowActivationState: Equatable {
+    case idle
+    case running
+    case requestSent
+    case estimated(Date)
+    case confirmed(Date)
+    case failed(String)
+}
+
 enum KimiFreshness {
     static let cacheRetention: TimeInterval = 30 * 60
 
@@ -151,6 +160,9 @@ final class UsageStore: ObservableObject {
     @Published var kimiIsStale = false
     @Published var claudeLastAttempt: Date?
     @Published var claudeLiveStatus: String?
+    @Published private(set) var claudeWindowActivationState: ClaudeWindowActivationState = .idle
+    @Published private(set) var claudeWindowScheduleNextAction: Date?
+    @Published private(set) var claudeWindowScheduleStatus = "Automatic scheduling is off"
     @Published var codexLastSuccess: Date?
     @Published var claudeLastSuccess: Date?
     @Published var kimiLastSuccess: Date?
@@ -166,6 +178,7 @@ final class UsageStore: ObservableObject {
     private let defaults: UserDefaults
     private let settings: AppSettings
     private let alertTracker: UsageAlertTracker
+    private let claudeWindowActivator: any ClaudeWindowActivating
     private var codexRefreshTask: Task<Void, Never>?
     private var claudeRefreshTask: Task<Void, Never>?
     private var kimiRefreshTask: Task<Void, Never>?
@@ -179,16 +192,30 @@ final class UsageStore: ObservableObject {
     private var hasStarted = false
     @Published private(set) var claudeRateLimitedUntil: Date?
     private var claudeBackoffAttempt = 0
+    private var claudeWindowActivationTask: Task<Void, Never>?
+    private var claudeWindowActivationAwaitingConfirmation = false
+    private var claudeWindowEstimatedResetAt: Date?
+    private var claudeWindowScheduleTimer: Timer?
+    private var claudeWindowScheduleRetryNotBefore: Date?
 
-    init(defaults: UserDefaults = .standard, settings: AppSettings? = nil) {
+    init(
+        defaults: UserDefaults = .standard,
+        settings: AppSettings? = nil,
+        claudeWindowActivator: any ClaudeWindowActivating = ClaudeWindowActivator()
+    ) {
         self.defaults = defaults
         self.settings = settings ?? AppSettings(defaults: defaults)
+        self.claudeWindowActivator = claudeWindowActivator
         alertTracker = UsageAlertTracker(defaults: defaults)
         isCompact = defaults.bool(forKey: "isCompact")
         usageAlertsEnabled = defaults.bool(forKey: "usageAlertsEnabled")
         if let persisted = ClaudeCooldownPersistence.load(from: defaults) {
             claudeRateLimitedUntil = persisted.retryAt
             claudeBackoffAttempt = persisted.backoffAttempt
+        }
+        if let estimatedResetAt = ClaudeWindowActivationPersistence.load(from: defaults) {
+            claudeWindowEstimatedResetAt = estimatedResetAt
+            claudeWindowActivationState = .estimated(estimatedResetAt)
         }
     }
 
@@ -201,7 +228,7 @@ final class UsageStore: ObservableObject {
             refreshCodex(trigger: "startup")
             scheduleCodexTimer()
         }
-        if settings.showClaude, !restoreClaudeCooldownIfNeeded() {
+        if claudeMonitoringEnabled, !restoreClaudeCooldownIfNeeded() {
             let delay = ProviderPollPersistence.startupDelay(
                 lastAttempt: ProviderPollPersistence.lastAttempt(for: .claude, from: defaults),
                 interval: ClaudePolling.interval(from: settings.claudePollingInterval),
@@ -228,6 +255,7 @@ final class UsageStore: ObservableObject {
                 scheduleKimiTimer()
             }
         }
+        evaluateClaudeWindowSchedule(trigger: "startup")
     }
 
     func refresh() {
@@ -254,6 +282,95 @@ final class UsageStore: ObservableObject {
 
     func setClaudeLiveStatus(_ status: String?) {
         claudeLiveStatus = status
+    }
+
+    var canStartClaudeWindow: Bool {
+        ClaudeWindowActivationEligibility.canStart(
+            resetsAt: claudeWindowEffectiveResetAt,
+            isRunning: claudeWindowActivationState == .running,
+            isAwaitingConfirmation: claudeWindowActivationAwaitingConfirmation
+        )
+    }
+
+    var claudeWindowActivationDetail: String {
+        switch claudeWindowActivationState {
+        case .running:
+            return "Sending one restricted background request…"
+        case .requestSent:
+            return "Request sent · checking Claude’s timer"
+        case let .estimated(resetAt):
+            return "Window started · estimated reset in \(UsageFormatting.resetCountdownValueText(for: resetAt))"
+        case let .confirmed(resetAt):
+            return "Window started · resets in \(UsageFormatting.resetCountdownValueText(for: resetAt))"
+        case let .failed(message):
+            return message
+        case .idle:
+            if let resetAt = claudeWindowEffectiveResetAt, resetAt > .now {
+                return "Already active · resets in \(UsageFormatting.resetCountdownValueText(for: resetAt))"
+            }
+            return "Sends one tool-free request without opening Terminal"
+        }
+    }
+
+    var claudeWindowScheduleDetail: String {
+        claudeWindowScheduleStatus
+    }
+
+    private var claudeMonitoringEnabled: Bool {
+        settings.showClaude || settings.claudeWindowScheduleEnabled
+    }
+
+    private var claudeWindowEffectiveResetAt: Date? {
+        if let providerResetAt = claude.usage?.primary.resetsAt, providerResetAt > .now {
+            return providerResetAt
+        }
+        if let estimatedResetAt = claudeWindowEstimatedResetAt, estimatedResetAt > .now {
+            return estimatedResetAt
+        }
+        return nil
+    }
+
+    func startClaudeWindow(trigger: String = "manual") {
+        guard canStartClaudeWindow else {
+            AppLog.info("claude-window", "Activation skipped because a window or request is already active")
+            return
+        }
+
+        claudeWindowActivationTask?.cancel()
+        claudeWindowActivationState = .running
+        claudeWindowActivationAwaitingConfirmation = false
+        AppLog.info("claude-window", "Restricted background activation started trigger=\(trigger)")
+        claudeWindowActivationTask = Task {
+            do {
+                try await claudeWindowActivator.activate()
+                guard !Task.isCancelled else { return }
+                let estimatedResetAt = Date.now.addingTimeInterval(
+                    ClaudeWindowActivationPersistence.windowDuration
+                )
+                claudeWindowEstimatedResetAt = estimatedResetAt
+                ClaudeWindowActivationPersistence.save(estimatedResetAt, to: defaults)
+                claudeWindowActivationState = .estimated(estimatedResetAt)
+                claudeWindowActivationAwaitingConfirmation = true
+                claudeWindowScheduleRetryNotBefore = nil
+                AppLog.info("claude-window", "Activation request completed; estimated reset saved and provider confirmation pending")
+                evaluateClaudeWindowSchedule(trigger: "activation-succeeded")
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled else { return }
+                refreshClaude(trigger: "window-activation", force: true)
+            } catch {
+                guard !Task.isCancelled else { return }
+                claudeWindowActivationState = .failed(error.localizedDescription)
+                claudeWindowActivationAwaitingConfirmation = false
+                if settings.claudeWindowScheduleEnabled {
+                    claudeWindowScheduleRetryNotBefore = Date.now.addingTimeInterval(
+                        ClaudeWindowSchedule.failureRetryDelay
+                    )
+                    evaluateClaudeWindowSchedule(trigger: "activation-failed")
+                }
+                AppLog.error("claude-window", "Activation failed: \(error.localizedDescription)")
+            }
+            claudeWindowActivationTask = nil
+        }
     }
 
     func ingestClaudeLive(_ snapshot: ClaudeLiveUsageSnapshot) {
@@ -286,6 +403,32 @@ final class UsageStore: ObservableObject {
         }
         usageDisplayChanged?()
         AppLog.info("claude-live", "Live usage applied remaining=\(Int(merged.primary.remainingPercent.rounded()))%")
+        evaluateClaudeWindowSchedule(trigger: "claude-live")
+    }
+
+    func applyClaudeWindowScheduleSettings() {
+        if settings.claudeWindowScheduleEnabled,
+           hasStarted,
+           !settings.showClaude,
+           claudeTimer == nil,
+           !claudeIsRefreshing {
+            refreshClaude(trigger: "window-schedule-enabled")
+        } else if !settings.claudeWindowScheduleEnabled, !settings.showClaude {
+            claudeTimer?.invalidate()
+            claudeTimer = nil
+            claudeNextRefresh = nil
+        }
+        evaluateClaudeWindowSchedule(trigger: "settings")
+    }
+
+    func handleClaudeWindowScheduleEvent(trigger: String) {
+        evaluateClaudeWindowSchedule(trigger: trigger)
+    }
+
+    func stopClaudeWindowSchedule() {
+        claudeWindowScheduleTimer?.invalidate()
+        claudeWindowScheduleTimer = nil
+        claudeWindowScheduleNextAction = nil
     }
 
     func state(for provider: ProviderKind) -> ProviderState {
@@ -345,7 +488,7 @@ final class UsageStore: ObservableObject {
             || codexLastSuccess != nil || claudeLastSuccess != nil || kimiLastSuccess != nil
         else { return }
         if settings.showCodex { scheduleCodexTimer() }
-        if settings.showClaude, claudeRateLimitedUntil == nil, !claudeIsRefreshing {
+        if claudeMonitoringEnabled, claudeRateLimitedUntil == nil, !claudeIsRefreshing {
             scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "settings")
         }
         if settings.showKimi { scheduleKimiTimer() }
@@ -363,7 +506,7 @@ final class UsageStore: ObservableObject {
             codexNextRefresh = nil
         }
 
-        if settings.showClaude {
+        if claudeMonitoringEnabled {
             let wasInactive = claudeTimer == nil
             if wasInactive, !claudeIsRefreshing {
                 if !restoreClaudeCooldownIfNeeded() {
@@ -387,6 +530,7 @@ final class UsageStore: ObservableObject {
             kimiTimer = nil
             kimiNextRefresh = nil
         }
+        evaluateClaudeWindowSchedule(trigger: "provider-settings")
         AppLog.info("scheduler", "Provider visibility changed codex=\(settings.showCodex) claude=\(settings.showClaude) kimi=\(settings.showKimi)")
     }
 
@@ -528,8 +672,8 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    private func refreshClaude(trigger: String) {
-        guard settings.showClaude else {
+    private func refreshClaude(trigger: String, force: Bool = false) {
+        guard claudeMonitoringEnabled else {
             AppLog.info("scheduler", "Claude refresh skipped trigger=\(trigger) reason=hidden")
             return
         }
@@ -546,7 +690,7 @@ final class UsageStore: ObservableObject {
             ClaudeCooldownPersistence.clear(from: defaults)
         }
 
-        if let current = claude.usage,
+        if !force, let current = claude.usage,
            current.source == .liveSession {
             let age = now.timeIntervalSince(current.fetchedAt)
             if age >= 0, age < ClaudeFreshness.livePollSuppression {
@@ -600,19 +744,25 @@ final class UsageStore: ObservableObject {
                 AppLog.info("scheduler", "Claude OAuth result ignored because a newer live update arrived")
                 scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "newer-live")
                 usageDisplayChanged?()
+                evaluateClaudeWindowSchedule(trigger: "oauth-ignored")
                 return
             }
-            claude = .loaded(usage)
+            let displayResult = usageApplyingClaudeWindowEstimate(to: usage, now: now)
+            let displayedUsage = displayResult.usage
+            claude = .loaded(displayedUsage)
             claudeLiveFreshnessTimer?.invalidate()
             claudeLiveFreshnessTimer = nil
-            claudeLastSuccess = usage.fetchedAt
-            evaluateAlerts(for: usage)
-            claudeNotice = nil
+            claudeLastSuccess = displayedUsage.fetchedAt
+            evaluateAlerts(for: displayedUsage)
+            claudeNotice = displayResult.isEstimated
+                ? "Reset estimated from successful background request"
+                : nil
             claudeIsStale = false
             claudeBackoffAttempt = 0
             claudeRateLimitedUntil = nil
             ClaudeCooldownPersistence.clear(from: defaults)
             scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "normal")
+            confirmClaudeWindowActivation(with: usage, now: now)
 
         case let .failure(error):
             if case let UsageError.rateLimited(retryAfter) = error {
@@ -656,8 +806,66 @@ final class UsageStore: ObservableObject {
                 claudeIsStale = false
                 scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "error-retry")
             }
+            if claudeWindowActivationAwaitingConfirmation {
+                claudeWindowActivationAwaitingConfirmation = false
+                if let estimatedResetAt = claudeWindowEstimatedResetAt, estimatedResetAt > now {
+                    claudeWindowActivationState = .estimated(estimatedResetAt)
+                    AppLog.warning("claude-window", "Provider check failed; keeping the successful activation estimate")
+                } else {
+                    claudeWindowActivationState = .failed("Request sent, but the timer check failed")
+                }
+            }
         }
         usageDisplayChanged?()
+        evaluateClaudeWindowSchedule(trigger: "oauth-result")
+    }
+
+    private func confirmClaudeWindowActivation(with usage: ProviderUsage, now: Date) {
+        guard claudeWindowActivationAwaitingConfirmation else { return }
+        claudeWindowActivationAwaitingConfirmation = false
+        if let resetAt = usage.primary.resetsAt, resetAt > now {
+            claudeWindowEstimatedResetAt = nil
+            ClaudeWindowActivationPersistence.clear(from: defaults)
+            claudeWindowActivationState = .confirmed(resetAt)
+            AppLog.info("claude-window", "Activation confirmed by a future reset timestamp")
+        } else if let estimatedResetAt = claudeWindowEstimatedResetAt, estimatedResetAt > now {
+            claudeWindowActivationState = .estimated(estimatedResetAt)
+            AppLog.info("claude-window", "Provider omitted reset timestamp; keeping activation estimate")
+        } else {
+            claudeWindowActivationState = .failed("Request finished, but Claude did not report a new timer")
+            AppLog.warning("claude-window", "Activation could not be confirmed from usage data")
+        }
+    }
+
+    private func usageApplyingClaudeWindowEstimate(
+        to usage: ProviderUsage,
+        now: Date
+    ) -> (usage: ProviderUsage, isEstimated: Bool) {
+        if let providerResetAt = usage.primary.resetsAt, providerResetAt > now {
+            claudeWindowEstimatedResetAt = nil
+            ClaudeWindowActivationPersistence.clear(from: defaults)
+            return (usage, false)
+        }
+        guard let estimatedResetAt = claudeWindowEstimatedResetAt, estimatedResetAt > now else {
+            claudeWindowEstimatedResetAt = nil
+            ClaudeWindowActivationPersistence.clear(from: defaults)
+            return (usage, false)
+        }
+        return (
+            ProviderUsage(
+                kind: usage.kind,
+                plan: usage.plan,
+                primary: UsageWindow(
+                    label: usage.primary.label,
+                    usedPercent: usage.primary.usedPercent,
+                    resetsAt: estimatedResetAt
+                ),
+                secondary: usage.secondary,
+                fetchedAt: usage.fetchedAt,
+                source: usage.source
+            ),
+            true
+        )
     }
 
     private func retainClaudeCacheOrFail(error: Error, now: Date, notice: String) {
@@ -699,7 +907,7 @@ final class UsageStore: ObservableObject {
 
     private func scheduleClaudeTimer(after interval: TimeInterval, trigger: String, source: String) {
         claudeTimer?.invalidate()
-        guard settings.showClaude else {
+        guard claudeMonitoringEnabled else {
             claudeTimer = nil
             claudeNextRefresh = nil
             return
@@ -718,6 +926,98 @@ final class UsageStore: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
         let fireAtText = ISO8601DateFormatter().string(from: fireAt)
         AppLog.info("scheduler", "Claude timer set delaySeconds=\(Int(delay.rounded())) fireAt=\(fireAtText) source=\(source)")
+    }
+
+    private func evaluateClaudeWindowSchedule(trigger: String, now: Date = .now) {
+        claudeWindowScheduleTimer?.invalidate()
+        claudeWindowScheduleTimer = nil
+        claudeWindowScheduleNextAction = nil
+
+        guard settings.claudeWindowScheduleEnabled else {
+            claudeWindowScheduleStatus = "Automatic scheduling is off"
+            return
+        }
+
+        let start = settings.claudeWindowStartMinutes
+        let end = settings.claudeWindowEndMinutes
+        guard ClaudeWindowSchedule.isActive(
+            at: now,
+            startMinutes: start,
+            endMinutes: end
+        ) else {
+            let nextStart = ClaudeWindowSchedule.nextActiveStart(after: now, startMinutes: start)
+            claudeWindowScheduleStatus = "Paused outside active hours · resumes \(Self.scheduleTimeText(nextStart))"
+            scheduleClaudeWindowAction(at: nextStart, reason: "active-hours", trigger: trigger, now: now)
+            return
+        }
+
+        if let resetAt = claudeWindowEffectiveResetAt, resetAt > now {
+            let nextAttempt = resetAt.addingTimeInterval(ClaudeWindowSchedule.activationDelay)
+            let fireAt: Date
+            if ClaudeWindowSchedule.isActive(at: nextAttempt, startMinutes: start, endMinutes: end) {
+                fireAt = nextAttempt
+                claudeWindowScheduleStatus = "Window active · next start after reset at \(Self.scheduleTimeText(fireAt))"
+            } else {
+                fireAt = ClaudeWindowSchedule.nextActiveStart(after: nextAttempt, startMinutes: start)
+                claudeWindowScheduleStatus = "Window crosses quiet hours · resumes \(Self.scheduleTimeText(fireAt))"
+            }
+            scheduleClaudeWindowAction(at: fireAt, reason: "window-reset", trigger: trigger, now: now)
+            return
+        }
+
+        if let retryAt = claudeWindowScheduleRetryNotBefore, retryAt > now {
+            claudeWindowScheduleStatus = "Last request failed · retrying at \(Self.scheduleTimeText(retryAt))"
+            scheduleClaudeWindowAction(at: retryAt, reason: "failure-retry", trigger: trigger, now: now)
+            return
+        }
+
+        if claudeWindowActivationState == .running || claudeWindowActivationAwaitingConfirmation {
+            claudeWindowScheduleStatus = "Starting the current Claude window…"
+            return
+        }
+
+        if case .loading = claude, claudeIsRefreshing {
+            let retryAt = now.addingTimeInterval(5)
+            claudeWindowScheduleStatus = "Checking the current Claude window…"
+            scheduleClaudeWindowAction(at: retryAt, reason: "initial-check", trigger: trigger, now: now)
+            return
+        }
+
+        claudeWindowScheduleStatus = "Active hours · starting a new window"
+        AppLog.info("claude-window", "Schedule activation due trigger=\(trigger)")
+        startClaudeWindow(trigger: "schedule-\(trigger)")
+    }
+
+    private func scheduleClaudeWindowAction(
+        at fireAt: Date,
+        reason: String,
+        trigger: String,
+        now: Date
+    ) {
+        let delay = max(1, fireAt.timeIntervalSince(now))
+        claudeWindowScheduleNextAction = fireAt
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.claudeWindowScheduleTimer = nil
+                self.claudeWindowScheduleNextAction = nil
+                self.evaluateClaudeWindowSchedule(trigger: "timer-\(reason)")
+            }
+        }
+        claudeWindowScheduleTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        AppLog.info(
+            "claude-window",
+            "Schedule timer set reason=\(reason) trigger=\(trigger) fireAt=\(ISO8601DateFormatter().string(from: fireAt))"
+        )
+    }
+
+    private static func scheduleTimeText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeStyle = .short
+        formatter.dateStyle = Calendar.current.isDateInToday(date) ? .none : .short
+        return formatter.string(from: date)
     }
 
     private func restoreClaudeCooldownIfNeeded(now: Date = .now) -> Bool {

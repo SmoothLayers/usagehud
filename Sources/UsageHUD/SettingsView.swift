@@ -24,6 +24,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     refreshSection
+                    claudeWindowSection
                     displaySection
                     appearanceSection
                     alertSection
@@ -109,6 +110,111 @@ struct SettingsView: View {
         let explanation = "Updates usage after each Claude Code response; polling stays on as a fallback"
         guard let status = store.claudeLiveStatus else { return explanation }
         return status.hasPrefix("Live Claude updates enabled") ? explanation : status
+    }
+
+    private var claudeWindowSection: some View {
+        InstrumentSection(
+            title: "CLAUDE WINDOW SCHEDULE",
+            detail: "Opt-in · silently keeps 5-hour windows active during your day"
+        ) {
+            VStack(spacing: 11) {
+                HStack {
+                    SettingLabel(
+                        title: "AUTOMATIC WINDOWS",
+                        detail: store.claudeWindowScheduleDetail
+                    )
+                    Spacer()
+                    InstrumentToggle(
+                        isOn: settings.claudeWindowScheduleEnabled,
+                        tint: SettingsPalette.claude
+                    ) {
+                        settings.setClaudeWindowScheduleEnabled(!settings.claudeWindowScheduleEnabled)
+                    }
+                }
+
+                if settings.claudeWindowScheduleEnabled {
+                    Divider().overlay(Color.white.opacity(0.08))
+                    HStack(spacing: 8) {
+                        SettingLabel(
+                            title: "ACTIVE HOURS",
+                            detail: "No background requests outside this range"
+                        )
+                        Spacer()
+                        scheduleTimePicker(
+                            minutes: settings.claudeWindowStartMinutes,
+                            set: settings.setClaudeWindowStartMinutes
+                        )
+                        Text("TO")
+                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                            .foregroundStyle(SettingsPalette.muted)
+                        scheduleTimePicker(
+                            minutes: settings.claudeWindowEndMinutes,
+                            set: settings.setClaudeWindowEndMinutes
+                        )
+                    }
+                }
+
+                Divider().overlay(Color.white.opacity(0.08))
+                HStack(spacing: 12) {
+                    SettingLabel(
+                        title: "START WINDOW NOW",
+                        detail: store.claudeWindowActivationDetail
+                    )
+                    Spacer()
+                    Button {
+                        store.startClaudeWindow()
+                    } label: {
+                        Label(
+                            store.claudeWindowActivationState == .running ? "STARTING" : "START NOW",
+                            systemImage: store.claudeWindowActivationState == .running
+                                ? "arrow.trianglehead.2.clockwise.rotate.90"
+                                : "play.fill"
+                        )
+                        .font(.system(size: 8, weight: .black, design: .monospaced))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(SettingsPalette.claude.opacity(store.canStartClaudeWindow ? 0.16 : 0.06))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(SettingsPalette.claude.opacity(store.canStartClaudeWindow ? 0.55 : 0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(store.canStartClaudeWindow ? SettingsPalette.claude : SettingsPalette.muted)
+                    .disabled(!store.canStartClaudeWindow)
+                    .help("Uses a small amount of Claude plan capacity")
+                }
+            }
+        }
+    }
+
+    private func scheduleTimePicker(
+        minutes: Int,
+        set: @escaping (Int) -> Void
+    ) -> some View {
+        Picker(
+            "",
+            selection: Binding(get: { minutes }, set: set)
+        ) {
+            ForEach(AppSettings.claudeWindowScheduleTimeChoices, id: \.self) { choice in
+                Text(scheduleTimeLabel(choice)).tag(choice)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 86)
+        .tint(SettingsPalette.claude)
+    }
+
+    private func scheduleTimeLabel(_ minutes: Int) -> String {
+        let hour = minutes / 60
+        let minute = minutes % 60
+        let suffix = hour < 12 ? "AM" : "PM"
+        let displayHour = hour % 12 == 0 ? 12 : hour % 12
+        return String(format: "%d:%02d %@", displayHour, minute, suffix)
     }
 
     private func cadenceRow(

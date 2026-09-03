@@ -247,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.applyClaudeLiveUsageSetting()
             case .notch:
                 self.applyNotchModeSetting()
+            case .claudeWindowSchedule:
+                self.store.applyClaudeWindowScheduleSettings()
             }
         }
         applyClaudeLiveUsageSetting()
@@ -519,11 +521,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // to the desktop whenever Always on Top is off.
         updatePanelOrdering(reason: "app-activated")
         store.refreshStaleProviders(trigger: "app-activated")
+        store.handleClaudeWindowScheduleEvent(trigger: "app-activated")
     }
 
     @objc private func workspaceDidWake(_ notification: Notification) {
         AppLog.info("scheduler", "System wake detected; checking provider freshness")
         store.refreshStaleProviders(trigger: "system-wake")
+        store.handleClaudeWindowScheduleEvent(trigger: "system-wake")
     }
 
     private func applyClaudeLiveUsageSetting() {
@@ -567,6 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        store.stopClaudeWindowSchedule()
         claudeLiveUsageServer?.stop()
         notchController.setEnabled(false)
     }
