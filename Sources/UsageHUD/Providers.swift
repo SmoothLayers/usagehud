@@ -886,14 +886,6 @@ struct ClaudeUsageProvider: UsageProviding {
             }
         }
 
-        // A stored token also simply expires when no Claude Code session has
-        // run recently. Delegate a refresh to the CLI and retry once.
-        if response.http.statusCode == 401,
-           let repaired = await ClaudeCredentialRepair.repair(using: credential) {
-            credential = repaired
-            response = try await requestUsage(token: credential.accessToken)
-        }
-
         let data = response.data
         let http = response.http
         AppLog.info("claude", "Usage response HTTP \(http.statusCode)")

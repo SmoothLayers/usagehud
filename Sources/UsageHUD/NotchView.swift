@@ -458,7 +458,6 @@ private struct RingColumn: View {
 
     private var ring: some View {
         ZStack {
-            bloom
             halo
 
             // The face: lit from above, so the ring reads as a small domed
@@ -518,22 +517,6 @@ private struct RingColumn: View {
             .blur(radius: 10)
             .scaleEffect(1.2)
             .opacity(isEmphasized ? 0.28 : 0)
-    }
-
-    /// Flat at rest, like the mock the tray is styled after; colour only
-    /// appears as focus (hover) or life (a streaming session breathing).
-    @ViewBuilder
-    private var bloom: some View {
-        if status == .live, !reduceMotion, !isEmphasized {
-            TimelineView(.animation(minimumInterval: 1 / 20)) { context in
-                let breath = HUDMotion.breath(context.date)
-                Circle()
-                    .fill(accent)
-                    .opacity(0.08 + 0.12 * breath)
-                    .blur(radius: 12)
-                    .scaleEffect(1.05 + 0.05 * breath)
-            }
-        }
     }
 
     @ViewBuilder

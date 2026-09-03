@@ -653,52 +653,47 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertNil(ClaudeCredentials.parse(Data("{}".utf8), source: .credentialsFile))
     }
 
-    func testClaudeCredentialParsingExtractsRefreshTokenAndScopes() throws {
+    func testClaudeCredentialParsingIgnoresMcpOAuthTokens() throws {
+        // Real keychain layout: an MCP server token set shares key names with
+        // the Claude login. Dictionary order is random, so a recursive lookup
+        // picked the MCP token about half the time and produced HTTP 401s.
         let data = try JSONSerialization.data(withJSONObject: [
+            "mcpOAuth": [
+                "magnific|abc": [
+                    "accessToken": "mcp-token",
+                    "refreshToken": "mcp-refresh",
+                    "serverName": "magnific",
+                ],
+            ],
             "claudeAiOauth": [
-                "accessToken": "local-test-token",
-                "refreshToken": "local-refresh-token",
-                "scopes": ["user:profile", "user:inference"],
+                "accessToken": "claude-token",
+                "refreshToken": "claude-refresh",
+                "subscriptionType": "max",
             ],
         ])
-        let credential = try XCTUnwrap(ClaudeCredentials.parse(data, source: .scopedKeychain))
-        XCTAssertEqual(credential.refreshToken, "local-refresh-token")
-        XCTAssertEqual(credential.scopes, ["user:profile", "user:inference"])
+        for _ in 0..<50 {
+            XCTAssertEqual(
+                ClaudeCredentials.parse(data, source: .legacyKeychain),
+                ClaudeCredential(accessToken: "claude-token", plan: "Max", source: .legacyKeychain)
+            )
+        }
 
-        let stringScopes = try JSONSerialization.data(withJSONObject: [
-            "claudeAiOauth": [
-                "accessToken": "local-test-token",
-                "scopes": "user:profile user:inference",
-            ],
+        let mcpOnly = try JSONSerialization.data(withJSONObject: [
+            "mcpOAuth": ["magnific|abc": ["accessToken": "mcp-token"]],
         ])
-        let parsed = try XCTUnwrap(ClaudeCredentials.parse(stringScopes, source: .credentialsFile))
-        XCTAssertNil(parsed.refreshToken)
-        XCTAssertEqual(parsed.scopes, ["user:profile", "user:inference"])
+        XCTAssertNil(ClaudeCredentials.parse(mcpOnly, source: .legacyKeychain))
     }
 
-    func testClaudeCredentialRepairEnvironmentSetsLoginVariables() {
-        let environment = ClaudeCredentialRepair.loginEnvironment(
-            refreshToken: "local-refresh-token",
-            scopes: ["user:profile", "user:inference"],
-            base: ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/tmp/claude"]
+    func testClaudeCredentialParsingAcceptsFlatLegacyLayout() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "accessToken": "flat-token",
+            "subscriptionType": "pro",
+        ])
+        XCTAssertEqual(
+            ClaudeCredentials.parse(data, source: .credentialsFile),
+            ClaudeCredential(accessToken: "flat-token", plan: "Pro", source: .credentialsFile)
         )
-        XCTAssertEqual(environment["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"], "local-refresh-token")
-        XCTAssertEqual(environment["CLAUDE_CODE_OAUTH_SCOPES"], "user:profile user:inference")
-        XCTAssertEqual(environment["PATH"], "/usr/bin")
-        XCTAssertEqual(environment["CLAUDE_CONFIG_DIR"], "/tmp/claude")
-    }
-
-    func testClaudeCredentialRepairThrottlesRepeatAttempts() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertTrue(ClaudeCredentialRepair.attemptAllowed(lastAttempt: nil, now: now))
-        XCTAssertFalse(ClaudeCredentialRepair.attemptAllowed(
-            lastAttempt: now.addingTimeInterval(-ClaudeCredentialRepair.minimumAttemptInterval + 1),
-            now: now
-        ))
-        XCTAssertTrue(ClaudeCredentialRepair.attemptAllowed(
-            lastAttempt: now.addingTimeInterval(-ClaudeCredentialRepair.minimumAttemptInterval),
-            now: now
-        ))
+        XCTAssertNil(ClaudeCredentials.parse(Data("[]".utf8), source: .credentialsFile))
     }
 
     func testClaudeLiveUsageParsesSchemaVariantsAndMilliseconds() throws {
