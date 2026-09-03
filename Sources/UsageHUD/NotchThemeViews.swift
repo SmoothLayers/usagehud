@@ -70,38 +70,22 @@ enum NotchThemeStyle {
     static func percent(_ value: Double) -> String { "\(Int(value.rounded()))" }
 }
 
-/// A provider's pulse: a breathing dot while a session streams, a still
-/// amber bead while its numbers are stale, nothing otherwise.
+/// A still amber bead beside a provider's figure while its numbers are
+/// stale; nothing otherwise. Live sessions deliberately show no extra mark:
+/// an accent-coloured dot was too easy to mistake for the stale bead.
 private struct StatusDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let status: ProviderVisualStatus
     let accent: Color
     var size: CGFloat = 4
 
     var body: some View {
-        switch status {
-        case .live:
-            if reduceMotion {
-                dot(accent, glow: 1)
-            } else {
-                TimelineView(.animation(minimumInterval: 1 / 20)) { context in
-                    let breath = HUDMotion.breath(context.date)
-                    dot(accent, glow: breath).scaleEffect(0.85 + 0.3 * breath)
-                }
-            }
-        case .stale:
-            dot(HUDStatusPalette.amber, glow: 0.4)
-        default:
-            EmptyView()
+        if status == .stale {
+            Circle()
+                .fill(HUDStatusPalette.amber)
+                .frame(width: size, height: size)
+                .shadow(color: HUDStatusPalette.amber.opacity(0.6), radius: 2.3)
+                .accessibilityLabel("Data is stale")
         }
-    }
-
-    private func dot(_ color: Color, glow: Double) -> some View {
-        Circle()
-            .fill(color)
-            .frame(width: size, height: size)
-            .shadow(color: color.opacity(0.4 + 0.5 * glow), radius: 1.5 + 2 * glow)
-            .accessibilityLabel(status == .live ? "Live session active" : "Data is stale")
     }
 }
 
