@@ -684,6 +684,61 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertNil(ClaudeCredentials.parse(mcpOnly, source: .legacyKeychain))
     }
 
+    func testClaudeCredentialShapeNeverContainsSecrets() throws {
+        let document = Data("""
+        {"claudeAiOauth":{"accessToken":"sk-ant-secret-token","refreshToken":"sk-ant-refresh","expiresAt":1},
+         "mcpOAuth":{"magnific":{"accessToken":"mcp-secret"}}}
+        """.utf8)
+        let shape = ClaudeCredentials.shape(of: document)
+        XCTAssertEqual(shape, "keys=[claudeAiOauth,mcpOAuth] claudeAiOauth=[accessToken,expiresAt,refreshToken] accessToken=present")
+        XCTAssertFalse(shape.contains("secret"))
+
+        let signedOut = Data(#"{"mcpOAuth":{"magnific":{"accessToken":"mcp-secret"}}}"#.utf8)
+        XCTAssertEqual(ClaudeCredentials.shape(of: signedOut), "keys=[mcpOAuth] claudeAiOauth=missing")
+        XCTAssertEqual(ClaudeCredentials.shape(of: Data("nope".utf8)), "not-json bytes=4")
+    }
+
+    /// A credential document that exists but lost its login block means
+    /// Claude Code signed itself out, which needs a real `/login`. Missing
+    /// documents get the generic sign-in hint. Either way the CLI-based
+    /// window activation must not run for the signed-out case.
+    func testClaudeCredentialFailureDistinguishesSignedOutFromMissing() {
+        let signedOut = ClaudeCredentials.failure(for: [
+            (.scopedKeychain, .missing),
+            (.legacyKeychain, .signedOut(shape: "keys=[mcpOAuth] claudeAiOauth=missing")),
+            (.credentialsFile, .missing),
+        ])
+        XCTAssertEqual(signedOut.errorDescription, ClaudeCredentials.signedOutMessage)
+        XCTAssertTrue(ClaudeCredentials.isSignedOut(signedOut))
+
+        let missing = ClaudeCredentials.failure(for: [
+            (.scopedKeychain, .missing),
+            (.legacyKeychain, .readFailed(status: 36)),
+            (.credentialsFile, .missing),
+        ])
+        XCTAssertEqual(missing.errorDescription, ClaudeCredentials.missingMessage)
+        XCTAssertFalse(ClaudeCredentials.isSignedOut(missing))
+        XCTAssertFalse(ClaudeCredentials.isSignedOut(UsageError.notLoggedIn("Claude login expired; run `claude auth login`")))
+
+        XCTAssertEqual(ClaudeCredentials.LocationOutcome.timedOut.logValue, "timed-out")
+        XCTAssertEqual(ClaudeCredentials.LocationOutcome.readFailed(status: 36).logValue, "read-failed(exit 36)")
+    }
+
+    func testClaudeWindowActivationErrorNamesTheCLIFailure() {
+        let stderr = Data("\u{001B}[31mNot logged in · Please run /login\u{001B}[0m\nsecond line\n".utf8)
+        let detail = ClaudeWindowActivationError.detail(fromStderr: stderr)
+        XCTAssertEqual(detail, "Not logged in · Please run /login")
+        XCTAssertEqual(
+            ClaudeWindowActivationError.commandFailed(1, detail: detail).errorDescription,
+            "Claude window request failed (exit 1): Not logged in · Please run /login"
+        )
+        XCTAssertEqual(
+            ClaudeWindowActivationError.commandFailed(1, detail: nil).errorDescription,
+            "Claude window request failed (exit 1)"
+        )
+        XCTAssertNil(ClaudeWindowActivationError.detail(fromStderr: Data("  \n\n".utf8)))
+    }
+
     func testClaudeCredentialParsingAcceptsFlatLegacyLayout() throws {
         let data = try JSONSerialization.data(withJSONObject: [
             "accessToken": "flat-token",
