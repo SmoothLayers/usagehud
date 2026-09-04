@@ -637,9 +637,9 @@ private struct NotchInlineDetail: View {
         VStack(alignment: .leading, spacing: 9) {
             switch state {
             case let .loaded(usage):
-                row(usage.primary, title: "Session")
+                row(usage.primary, title: usage.primary.displayTitle)
                 if let secondary = usage.secondary {
-                    row(secondary, title: "Week")
+                    row(secondary, title: secondary.displayTitle)
                 }
             case .loading:
                 message("Checking limits…")

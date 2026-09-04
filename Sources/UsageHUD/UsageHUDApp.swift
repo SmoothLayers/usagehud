@@ -16,6 +16,9 @@ enum UsageHUDMain {
     private static var delegate: AppDelegate?
 
     static func main() {
+        // A child process (Codex/Claude CLI) that exits early must not take
+        // the whole app down when we write to its stdin.
+        ChildProcessInput.installSIGPIPEGuard()
         let application = NSApplication.shared
         let delegate = AppDelegate()
         Self.delegate = delegate

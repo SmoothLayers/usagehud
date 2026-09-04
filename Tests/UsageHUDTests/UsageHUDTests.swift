@@ -684,6 +684,61 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertNil(ClaudeCredentials.parse(mcpOnly, source: .legacyKeychain))
     }
 
+    func testClaudeCredentialShapeNeverContainsSecrets() throws {
+        let document = Data("""
+        {"claudeAiOauth":{"accessToken":"sk-ant-secret-token","refreshToken":"sk-ant-refresh","expiresAt":1},
+         "mcpOAuth":{"magnific":{"accessToken":"mcp-secret"}}}
+        """.utf8)
+        let shape = ClaudeCredentials.shape(of: document)
+        XCTAssertEqual(shape, "keys=[claudeAiOauth,mcpOAuth] claudeAiOauth=[accessToken,expiresAt,refreshToken] accessToken=present")
+        XCTAssertFalse(shape.contains("secret"))
+
+        let signedOut = Data(#"{"mcpOAuth":{"magnific":{"accessToken":"mcp-secret"}}}"#.utf8)
+        XCTAssertEqual(ClaudeCredentials.shape(of: signedOut), "keys=[mcpOAuth] claudeAiOauth=missing")
+        XCTAssertEqual(ClaudeCredentials.shape(of: Data("nope".utf8)), "not-json bytes=4")
+    }
+
+    /// A credential document that exists but lost its login block means
+    /// Claude Code signed itself out, which needs a real `/login`. Missing
+    /// documents get the generic sign-in hint. Either way the CLI-based
+    /// window activation must not run for the signed-out case.
+    func testClaudeCredentialFailureDistinguishesSignedOutFromMissing() {
+        let signedOut = ClaudeCredentials.failure(for: [
+            (.scopedKeychain, .missing),
+            (.legacyKeychain, .signedOut(shape: "keys=[mcpOAuth] claudeAiOauth=missing")),
+            (.credentialsFile, .missing),
+        ])
+        XCTAssertEqual(signedOut.errorDescription, ClaudeCredentials.signedOutMessage)
+        XCTAssertTrue(ClaudeCredentials.isSignedOut(signedOut))
+
+        let missing = ClaudeCredentials.failure(for: [
+            (.scopedKeychain, .missing),
+            (.legacyKeychain, .readFailed(status: 36)),
+            (.credentialsFile, .missing),
+        ])
+        XCTAssertEqual(missing.errorDescription, ClaudeCredentials.missingMessage)
+        XCTAssertFalse(ClaudeCredentials.isSignedOut(missing))
+        XCTAssertFalse(ClaudeCredentials.isSignedOut(UsageError.notLoggedIn("Claude login expired; run `claude auth login`")))
+
+        XCTAssertEqual(ClaudeCredentials.LocationOutcome.timedOut.logValue, "timed-out")
+        XCTAssertEqual(ClaudeCredentials.LocationOutcome.readFailed(status: 36).logValue, "read-failed(exit 36)")
+    }
+
+    func testClaudeWindowActivationErrorNamesTheCLIFailure() {
+        let stderr = Data("\u{001B}[31mNot logged in · Please run /login\u{001B}[0m\nsecond line\n".utf8)
+        let detail = ClaudeWindowActivationError.detail(fromStderr: stderr)
+        XCTAssertEqual(detail, "Not logged in · Please run /login")
+        XCTAssertEqual(
+            ClaudeWindowActivationError.commandFailed(1, detail: detail).errorDescription,
+            "Claude window request failed (exit 1): Not logged in · Please run /login"
+        )
+        XCTAssertEqual(
+            ClaudeWindowActivationError.commandFailed(1, detail: nil).errorDescription,
+            "Claude window request failed (exit 1)"
+        )
+        XCTAssertNil(ClaudeWindowActivationError.detail(fromStderr: Data("  \n\n".utf8)))
+    }
+
     func testClaudeCredentialParsingAcceptsFlatLegacyLayout() throws {
         let data = try JSONSerialization.data(withJSONObject: [
             "accessToken": "flat-token",
@@ -1312,6 +1367,109 @@ final class UsageHUDTests: XCTestCase {
         """))
         XCTAssertEqual(used.primary.usedPercent, 23)
         XCTAssertEqual(used.secondary?.usedPercent, 9)
+    }
+
+    /// Codex Pro has no 5h window. Whether app-server reports the weekly
+    /// window as `primary` (7d duration) or only as `secondary`, it must
+    /// become the HUD's primary window and be titled as a week.
+    func testCodexWeeklyOnlyAppServerResponsePromotesWeeklyWindow() throws {
+        let weekly: [String: Any] = ["usedPercent": 99, "windowDurationMins": 10_080, "resetsAt": 1_757_200_000]
+
+        let asPrimary = try CodexUsageProvider.parseResponseObject([
+            "id": 1,
+            "result": ["rateLimits": ["planType": "pro", "primary": weekly]],
+        ])
+        XCTAssertEqual(asPrimary.primary.label, "7d window")
+        XCTAssertEqual(asPrimary.primary.remainingPercent, 1)
+        XCTAssertNil(asPrimary.secondary)
+        XCTAssertTrue(asPrimary.primary.isWeekly)
+        XCTAssertEqual(asPrimary.primary.displayTitle, "Week")
+        XCTAssertEqual(asPrimary.plan, "Pro")
+
+        let asSecondaryOnly = try CodexUsageProvider.parseResponseObject([
+            "id": 1,
+            "result": ["rateLimitsByLimitId": ["codex": ["planType": "pro", "primary": NSNull(), "secondary": weekly]]],
+        ])
+        XCTAssertEqual(asSecondaryOnly.primary.label, "7d window")
+        XCTAssertEqual(asSecondaryOnly.primary.usedPercent, 99)
+        XCTAssertNil(asSecondaryOnly.secondary)
+
+        // Plus keeps both windows, with the 5h window still primary.
+        let plus = try CodexUsageProvider.parseResponseObject([
+            "id": 1,
+            "result": ["rateLimits": [
+                "planType": "plus",
+                "primary": ["usedPercent": 23, "windowDurationMins": 300],
+                "secondary": weekly,
+            ]],
+        ])
+        XCTAssertEqual(plus.primary.label, "5h window")
+        XCTAssertEqual(plus.primary.displayTitle, "Session")
+        XCTAssertEqual(plus.secondary?.label, "7d window")
+        XCTAssertEqual(plus.secondary?.displayTitle, "Week")
+    }
+
+    func testUsageWindowWeeklyDetection() {
+        XCTAssertTrue(UsageWindow(label: "7d window", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertTrue(UsageWindow(label: "Weekly", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertFalse(UsageWindow(label: "5h window", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertFalse(UsageWindow(label: "Session", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertFalse(UsageWindow(label: "30m window", usedPercent: 0, resetsAt: nil).isWeekly)
+    }
+
+    /// Pro plans no longer have a 5h window. Codex 0.153 only prints the
+    /// weekly figure, and its footer omits the word "limit"; that must still
+    /// parse, with the weekly window promoted to primary.
+    func testCodexStatusFallbackAcceptsWeeklyOnlyOutput() throws {
+        // Captured from `codex -s read-only -a never` on 2026-09-03.
+        let footer = try XCTUnwrap(CodexUsageProvider.parseStatusOutput("""
+        ⚠ Heads up, you have less than 5% of your weekly limit left. Run /status for a breakdown. · weekly 1% left
+        ⚠ MCP startup incomplete (failed: zoho-invoice)  › Ask Codex to do anything   gpt-5.6-sol high · Context 100% left · weekly 1% left
+        """))
+        XCTAssertEqual(footer.primary.label, "7d window")
+        XCTAssertEqual(footer.primary.usedPercent, 99)
+        XCTAssertEqual(footer.primary.remainingPercent, 1)
+        XCTAssertNil(footer.secondary)
+        XCTAssertEqual(footer.source, .cliFallback)
+
+        let breakdown = try XCTUnwrap(CodexUsageProvider.parseStatusOutput("""
+        Weekly limit: [████████████████████] 99% used (resets 14:30 on 6 Sep)
+        """))
+        XCTAssertEqual(breakdown.primary.label, "7d window")
+        XCTAssertEqual(breakdown.primary.usedPercent, 99)
+
+        XCTAssertNil(CodexUsageProvider.parseStatusOutput("gpt-5.6-sol high · Context 100% left"))
+    }
+
+    /// Regression: writing `/status` to a Codex CLI that had already exited
+    /// delivered SIGPIPE and killed the app with no crash report. The write
+    /// must fail with an error instead of terminating the process.
+    func testChildProcessInputWriteToClosedPipeThrowsInsteadOfKillingProcess() throws {
+        let pipe = Pipe()
+        try pipe.fileHandleForReading.close()
+
+        XCTAssertThrowsError(
+            try ChildProcessInput.write("/status\r", to: pipe.fileHandleForWriting, provider: "codex")
+        ) { error in
+            guard case UsageError.commandFailed = error else {
+                return XCTFail("Expected commandFailed, got \(error)")
+            }
+        }
+        // Reaching this line proves SIGPIPE did not terminate the test runner.
+        try pipe.fileHandleForWriting.close()
+    }
+
+    /// Regression: `-a untrusted` is not a valid Codex approval policy. Codex
+    /// rejected it and exited immediately, so the fallback never once worked.
+    func testCodexStatusFallbackUsesValidApprovalPolicy() {
+        let arguments = CodexUsageProvider.statusFallbackArguments(binary: "/usr/local/bin/codex")
+        XCTAssertFalse(arguments.contains("untrusted"))
+        XCTAssertEqual(arguments.first, "-q")
+        XCTAssertTrue(arguments.contains("/usr/local/bin/codex"))
+        for (flag, value) in [("-s", "read-only"), ("-a", "never")] {
+            let index = try? XCTUnwrap(arguments.firstIndex(of: flag), "missing \(flag)")
+            XCTAssertEqual(index.map { arguments[$0 + 1] }, value)
+        }
     }
 
     func testCodexAuthenticationRPCErrorDoesNotBecomeGenericFailure() {

@@ -6,15 +6,35 @@ protocol ClaudeWindowActivating {
 
 enum ClaudeWindowActivationError: LocalizedError, Equatable {
     case timedOut
-    case commandFailed(Int32)
+    case commandFailed(Int32, detail: String?)
 
     var errorDescription: String? {
         switch self {
         case .timedOut:
             return "Claude did not respond within 30 seconds"
-        case let .commandFailed(status):
+        case let .commandFailed(status, detail):
+            if let detail, !detail.isEmpty {
+                return "Claude window request failed (exit \(status)): \(detail)"
+            }
             return "Claude window request failed (exit \(status))"
         }
+    }
+
+    /// First meaningful line of the CLI's stderr, trimmed and capped, so a
+    /// failure such as an expired login is named in the app log.
+    static func detail(fromStderr data: Data) -> String? {
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let clean = text.replacingOccurrences(
+            of: "\u{001B}\\[[0-?]*[ -/]*[@-~]",
+            with: "",
+            options: .regularExpression
+        )
+        guard let line = clean
+            .split(whereSeparator: \.isNewline)
+            .map({ $0.trimmingCharacters(in: .whitespaces) })
+            .first(where: { !$0.isEmpty })
+        else { return nil }
+        return String(line.prefix(200))
     }
 }
 
@@ -134,7 +154,8 @@ struct ClaudeWindowActivator: ClaudeWindowActivating {
         process.currentDirectoryURL = FileManager.default.temporaryDirectory
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let errors = Pipe()
+        process.standardError = errors
 
         var environment = ProcessInfo.processInfo.environment
         let binaryDirectory = URL(fileURLWithPath: binary).deletingLastPathComponent().path
@@ -152,14 +173,37 @@ struct ClaudeWindowActivator: ClaudeWindowActivating {
         process.terminationHandler = { _ in finished.signal() }
         try process.run()
 
+        // Drain stderr off-thread so a chatty CLI cannot fill the pipe and
+        // stall before it exits.
+        let stderrBox = StderrBox()
+        let stderrDrained = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            stderrBox.data = errors.fileHandleForReading.readDataToEndOfFile()
+            stderrDrained.signal()
+        }
+
         if finished.wait(timeout: .now() + timeout) == .timedOut {
             if process.isRunning { process.terminate() }
             _ = finished.wait(timeout: .now() + 2)
             throw ClaudeWindowActivationError.timedOut
         }
+        _ = stderrDrained.wait(timeout: .now() + 2)
 
         guard process.terminationStatus == 0 else {
-            throw ClaudeWindowActivationError.commandFailed(process.terminationStatus)
+            throw ClaudeWindowActivationError.commandFailed(
+                process.terminationStatus,
+                detail: ClaudeWindowActivationError.detail(fromStderr: stderrBox.data)
+            )
         }
+    }
+}
+
+private final class StderrBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+
+    var data: Data {
+        get { lock.lock(); defer { lock.unlock() }; return storage }
+        set { lock.lock(); defer { lock.unlock() }; storage = newValue }
     }
 }

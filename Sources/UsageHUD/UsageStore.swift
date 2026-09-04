@@ -197,6 +197,10 @@ final class UsageStore: ObservableObject {
     private var claudeWindowEstimatedResetAt: Date?
     private var claudeWindowScheduleTimer: Timer?
     private var claudeWindowScheduleRetryNotBefore: Date?
+    /// True after a poll found Claude Code's credential document without a
+    /// login block. Running the CLI cannot fix that, so scheduled window
+    /// activations pause until a poll succeeds again.
+    private(set) var claudeLoginMissing = false
 
     init(
         defaults: UserDefaults = .standard,
@@ -762,6 +766,7 @@ final class UsageStore: ObservableObject {
             claudeRateLimitedUntil = nil
             ClaudeCooldownPersistence.clear(from: defaults)
             scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "normal")
+            claudeLoginMissing = false
             confirmClaudeWindowActivation(with: usage, now: now)
 
         case let .failure(error):
@@ -806,6 +811,7 @@ final class UsageStore: ObservableObject {
                 claudeIsStale = false
                 scheduleClaudeTimer(after: ClaudePolling.interval(from: settings.claudePollingInterval), trigger: "timer", source: "error-retry")
             }
+            claudeLoginMissing = ClaudeCredentials.isSignedOut(error)
             if claudeWindowActivationAwaitingConfirmation {
                 claudeWindowActivationAwaitingConfirmation = false
                 if let estimatedResetAt = claudeWindowEstimatedResetAt, estimatedResetAt > now {
@@ -962,6 +968,12 @@ final class UsageStore: ObservableObject {
                 claudeWindowScheduleStatus = "Window crosses quiet hours · resumes \(Self.scheduleTimeText(fireAt))"
             }
             scheduleClaudeWindowAction(at: fireAt, reason: "window-reset", trigger: trigger, now: now)
+            return
+        }
+
+        if claudeLoginMissing {
+            claudeWindowScheduleStatus = "Paused · Claude Code is signed out, run /login"
+            AppLog.info("claude-window", "Schedule paused because Claude Code is signed out trigger=\(trigger)")
             return
         }
 

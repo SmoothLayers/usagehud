@@ -412,10 +412,10 @@ private struct InstrumentDetail: View {
         let accent = context.accent(kind)
         VStack(alignment: .leading, spacing: 10) {
             if let usage = context.usage(kind) {
-                row("Session", usage.primary, accent: accent)
+                row(usage.primary.displayTitle, usage.primary, accent: accent)
                 if let week = usage.secondary {
-                    row("Week", week, accent: accent)
-                } else {
+                    row(week.displayTitle, week, accent: accent)
+                } else if !usage.primary.isWeekly {
                     SmallCaps(text: "No weekly window", opacity: 0.3)
                 }
             } else {
@@ -569,9 +569,9 @@ private struct CapsulePill: View {
                 if let usage = context.usage(kind) {
                     TimelineView(.periodic(from: .now, by: 1)) { clock in
                         VStack(alignment: .leading, spacing: 4) {
-                            row("Session", usage.primary, accent: accent, now: clock.date)
+                            row(usage.primary.displayTitle, usage.primary, accent: accent, now: clock.date)
                             if let week = usage.secondary {
-                                row("Week", week, accent: accent, now: clock.date)
+                                row(week.displayTitle, week, accent: accent, now: clock.date)
                             }
                         }
                     }
@@ -1110,10 +1110,10 @@ private struct SegmentedDetail: View {
         let accent = context.accent(kind)
         VStack(alignment: .leading, spacing: 10) {
             if let usage = context.usage(kind) {
-                row("Session", usage.primary, accent: accent)
+                row(usage.primary.displayTitle, usage.primary, accent: accent)
                 if let week = usage.secondary {
-                    row("Week", week, accent: accent)
-                } else {
+                    row(week.displayTitle, week, accent: accent)
+                } else if !usage.primary.isWeekly {
                     SmallCaps(text: "No weekly window", opacity: 0.3)
                 }
             } else {

@@ -67,6 +67,34 @@ enum ExecutableLocator {
     }
 }
 
+/// Writes to child-process stdin without letting a dead child kill the app.
+///
+/// Writing to a pipe whose reader has exited raises SIGPIPE, whose default
+/// action terminates the process silently with no crash report. The Codex
+/// fallback did exactly that whenever the CLI exited before the app wrote
+/// `/status`. Ignoring SIGPIPE turns the write into an EPIPE error instead,
+/// which the throwing `write(contentsOf:)` surfaces so callers can recover.
+enum ChildProcessInput {
+    private static let ignoreSIGPIPE: Void = {
+        signal(SIGPIPE, SIG_IGN)
+    }()
+
+    /// Idempotent; safe to call from any thread, as early as `main()`.
+    static func installSIGPIPEGuard() {
+        _ = ignoreSIGPIPE
+    }
+
+    static func write(_ text: String, to handle: FileHandle, provider: String) throws {
+        installSIGPIPEGuard()
+        do {
+            try handle.write(contentsOf: Data(text.utf8))
+        } catch {
+            AppLog.warning(provider, "Child process closed stdin before the request was written: \(error.localizedDescription)")
+            throw UsageError.commandFailed("\(provider) exited before accepting input")
+        }
+    }
+}
+
 struct CodexUsageProvider: UsageProviding {
     func fetch() async throws -> ProviderUsage {
         guard let binary = ExecutableLocator.find("codex") else {
@@ -103,7 +131,9 @@ struct CodexUsageProvider: UsageProviding {
             try process.run()
 
             let initialize = #"{"jsonrpc":"2.0","method":"initialize","id":0,"params":{"clientInfo":{"name":"usage_hud","title":"Usage HUD","version":"\#(AppMetadata.version)"}}}"# + "\n"
-            input.fileHandleForWriting.write(Data(initialize.utf8))
+            // If app-server exits before reading stdin, skip straight to the
+            // stderr/fallback handling below instead of failing the poll.
+            let initialized = (try? ChildProcessInput.write(initialize, to: input.fileHandleForWriting, provider: "codex")) != nil
 
             let watchdog = DispatchWorkItem {
                 if process.isRunning { process.terminate() }
@@ -120,7 +150,7 @@ struct CodexUsageProvider: UsageProviding {
             // rate-limit snapshot is populated.
             var buffer = Data()
             var rateLimitRequestSent = false
-            while process.isRunning {
+            readLoop: while initialized, process.isRunning {
                 let chunk = output.fileHandleForReading.availableData
                 if chunk.isEmpty { break }
                 buffer.append(chunk)
@@ -143,7 +173,11 @@ struct CodexUsageProvider: UsageProviding {
                             #"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
                             #"{"jsonrpc":"2.0","method":"account/rateLimits/read","id":1,"params":{}}"#,
                         ].joined(separator: "\n") + "\n"
-                        input.fileHandleForWriting.write(Data(followUp.utf8))
+                        do {
+                            try ChildProcessInput.write(followUp, to: input.fileHandleForWriting, provider: "codex")
+                        } catch {
+                            break readLoop
+                        }
                         rateLimitRequestSent = true
                         continue
                     }
@@ -182,22 +216,45 @@ struct CodexUsageProvider: UsageProviding {
             with: "",
             options: .regularExpression
         )
-        guard let primaryUsed = parsedUsedPercent(label: "5h", in: clean) else { return nil }
-        let secondaryUsed = parsedUsedPercent(label: "weekly", in: clean)
+        let fiveHourUsed = parsedUsedPercent(labels: ["5h limit"], in: clean)
+        // Newer Codex builds only show the weekly figure for plans without a
+        // 5h window, and the footer renders it as "weekly 1% left" with no
+        // "limit" keyword, so accept both spellings.
+        let weeklyUsed = parsedUsedPercent(labels: ["weekly limit", "weekly"], in: clean)
+
+        let primary: UsageWindow
+        var secondary: UsageWindow?
+        if let fiveHourUsed {
+            primary = UsageWindow(label: "5h window", usedPercent: fiveHourUsed, resetsAt: nil)
+            secondary = weeklyUsed.map { UsageWindow(label: "7d window", usedPercent: $0, resetsAt: nil) }
+        } else if let weeklyUsed {
+            primary = UsageWindow(label: "7d window", usedPercent: weeklyUsed, resetsAt: nil)
+        } else {
+            return nil
+        }
+
         return ProviderUsage(
             kind: .codex,
             plan: nil,
-            primary: UsageWindow(label: "5h window", usedPercent: primaryUsed, resetsAt: nil),
-            secondary: secondaryUsed.map {
-                UsageWindow(label: "7d window", usedPercent: $0, resetsAt: nil)
-            },
+            primary: primary,
+            secondary: secondary,
             fetchedAt: fetchedAt,
             source: .cliFallback
         )
     }
 
+    private static func parsedUsedPercent(labels: [String], in output: String) -> Double? {
+        for label in labels {
+            if let value = parsedUsedPercent(label: label, in: output) { return value }
+        }
+        return nil
+    }
+
     private static func parsedUsedPercent(label: String, in output: String) -> Double? {
-        let pattern = "(?i)\(NSRegularExpression.escapedPattern(for: label))\\s+limit[^\\n\\r]*?([0-9]{1,3})%\\s*(left|used)?"
+        // The percentage must follow the label on the same line with no other
+        // percentage in between, so a progress bar is skipped but unrelated
+        // figures ("Context 100% left") are not picked up.
+        let pattern = "(?i)\\b\(NSRegularExpression.escapedPattern(for: label))[^\\n\\r%]*?([0-9]{1,3})%\\s*(left|used)?"
         guard
             let expression = try? NSRegularExpression(pattern: pattern),
             let match = expression.firstMatch(
@@ -218,6 +275,14 @@ struct CodexUsageProvider: UsageProviding {
         return suffix == "left" ? 100 - clamped : clamped
     }
 
+    /// `script` gives the full-screen CLI a private PTY. The read-only sandbox
+    /// and `never` approval policy ensure a fallback can inspect status but
+    /// cannot act. (`untrusted` is not a valid approval policy; Codex rejects
+    /// it and exits immediately, which is what used to trigger SIGPIPE.)
+    static func statusFallbackArguments(binary: String) -> [String] {
+        ["-q", "/dev/null", binary, "-s", "read-only", "-a", "never"]
+    }
+
     private static func fetchViaStatusCLI(
         binary: String,
         environment: [String: String],
@@ -227,7 +292,7 @@ struct CodexUsageProvider: UsageProviding {
         let input = Pipe()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-        process.arguments = ["-q", "/dev/null", binary, "-s", "read-only", "-a", "untrusted"]
+        process.arguments = statusFallbackArguments(binary: binary)
         process.currentDirectoryURL = FileManager.default.temporaryDirectory
         var fallbackEnvironment = environment
         fallbackEnvironment["TERM"] = "xterm-256color"
@@ -247,13 +312,15 @@ struct CodexUsageProvider: UsageProviding {
             if process.isRunning { process.terminate() }
         }
 
-        // `script` gives the full-screen CLI a private PTY. The read-only and
-        // untrusted flags ensure a fallback can inspect status but cannot act.
+        // Give the TUI a moment to start, then ask for status. If Codex has
+        // already exited (bad flags, not signed in), the write fails with EPIPE
+        // instead of killing the app; fall through to read what it printed.
         Thread.sleep(forTimeInterval: 1)
-        input.fileHandleForWriting.write(Data("/status\r".utf8))
+        let statusCommand = "/status\r"
+        let sentStatus = (try? ChildProcessInput.write(statusCommand, to: input.fileHandleForWriting, provider: "codex")) != nil
         let resendStatus = DispatchWorkItem {
             if process.isRunning {
-                input.fileHandleForWriting.write(Data("/status\r".utf8))
+                try? ChildProcessInput.write(statusCommand, to: input.fileHandleForWriting, provider: "codex")
             }
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: resendStatus)
@@ -280,7 +347,16 @@ struct CodexUsageProvider: UsageProviding {
                 throw UsageError.notLoggedIn("Sign in with `codex login`")
             }
         }
-        AppLog.error("codex", "CLI status fallback failed; preserving app-server error")
+        if !sentStatus {
+            let detail = String(data: buffer, encoding: .utf8)?
+                .replacingOccurrences(of: "\u{001B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty } ?? "no output"
+            AppLog.error("codex", "CLI status fallback exited before accepting input: \(detail)")
+        } else {
+            AppLog.error("codex", "CLI status fallback failed; preserving app-server error")
+        }
         throw originalError
     }
 
@@ -302,15 +378,34 @@ struct CodexUsageProvider: UsageProviding {
         let legacy = result["rateLimits"] as? [String: Any]
         let buckets = result["rateLimitsByLimitId"] as? [String: Any]
         let codexBucket = buckets?["codex"] as? [String: Any]
+        func hasWindow(_ snapshot: [String: Any]) -> Bool {
+            snapshot["primary"] is [String: Any] || snapshot["secondary"] is [String: Any]
+        }
         let firstPopulatedBucket = buckets?.values
             .compactMap { $0 as? [String: Any] }
-            .first { $0["primary"] is [String: Any] }
+            .first(where: hasWindow)
         guard
             let snapshot = [legacy, codexBucket, firstPopulatedBucket]
                 .compactMap({ $0 })
-                .first(where: { $0["primary"] is [String: Any] }),
-            let primary = parseWindow(snapshot["primary"], fallbackLabel: "Session")
+                .first(where: hasWindow)
         else {
+            throw UsageError.invalidResponse("Codex returned no subscription limits")
+        }
+
+        // Plus plans have a 5h primary plus a weekly secondary. Pro plans only
+        // have the weekly window, which the server may report under either
+        // key; promote it so the HUD always has something to show.
+        let session = parseWindow(snapshot["primary"], fallbackLabel: "Session")
+        let weekly = parseWindow(snapshot["secondary"], fallbackLabel: "Weekly")
+        let primary: UsageWindow
+        let secondary: UsageWindow?
+        if let session {
+            primary = session
+            secondary = weekly
+        } else if let weekly {
+            primary = weekly
+            secondary = nil
+        } else {
             throw UsageError.invalidResponse("Codex returned no subscription limits")
         }
 
@@ -318,7 +413,7 @@ struct CodexUsageProvider: UsageProviding {
             kind: .codex,
             plan: (snapshot["planType"] as? String)?.replacingOccurrences(of: "_", with: " ").capitalized,
             primary: primary,
-            secondary: parseWindow(snapshot["secondary"], fallbackLabel: "Weekly"),
+            secondary: secondary,
             fetchedAt: .now
         )
     }
