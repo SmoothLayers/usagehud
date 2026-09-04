@@ -1314,6 +1314,109 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(used.secondary?.usedPercent, 9)
     }
 
+    /// Codex Pro has no 5h window. Whether app-server reports the weekly
+    /// window as `primary` (7d duration) or only as `secondary`, it must
+    /// become the HUD's primary window and be titled as a week.
+    func testCodexWeeklyOnlyAppServerResponsePromotesWeeklyWindow() throws {
+        let weekly: [String: Any] = ["usedPercent": 99, "windowDurationMins": 10_080, "resetsAt": 1_757_200_000]
+
+        let asPrimary = try CodexUsageProvider.parseResponseObject([
+            "id": 1,
+            "result": ["rateLimits": ["planType": "pro", "primary": weekly]],
+        ])
+        XCTAssertEqual(asPrimary.primary.label, "7d window")
+        XCTAssertEqual(asPrimary.primary.remainingPercent, 1)
+        XCTAssertNil(asPrimary.secondary)
+        XCTAssertTrue(asPrimary.primary.isWeekly)
+        XCTAssertEqual(asPrimary.primary.displayTitle, "Week")
+        XCTAssertEqual(asPrimary.plan, "Pro")
+
+        let asSecondaryOnly = try CodexUsageProvider.parseResponseObject([
+            "id": 1,
+            "result": ["rateLimitsByLimitId": ["codex": ["planType": "pro", "primary": NSNull(), "secondary": weekly]]],
+        ])
+        XCTAssertEqual(asSecondaryOnly.primary.label, "7d window")
+        XCTAssertEqual(asSecondaryOnly.primary.usedPercent, 99)
+        XCTAssertNil(asSecondaryOnly.secondary)
+
+        // Plus keeps both windows, with the 5h window still primary.
+        let plus = try CodexUsageProvider.parseResponseObject([
+            "id": 1,
+            "result": ["rateLimits": [
+                "planType": "plus",
+                "primary": ["usedPercent": 23, "windowDurationMins": 300],
+                "secondary": weekly,
+            ]],
+        ])
+        XCTAssertEqual(plus.primary.label, "5h window")
+        XCTAssertEqual(plus.primary.displayTitle, "Session")
+        XCTAssertEqual(plus.secondary?.label, "7d window")
+        XCTAssertEqual(plus.secondary?.displayTitle, "Week")
+    }
+
+    func testUsageWindowWeeklyDetection() {
+        XCTAssertTrue(UsageWindow(label: "7d window", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertTrue(UsageWindow(label: "Weekly", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertFalse(UsageWindow(label: "5h window", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertFalse(UsageWindow(label: "Session", usedPercent: 0, resetsAt: nil).isWeekly)
+        XCTAssertFalse(UsageWindow(label: "30m window", usedPercent: 0, resetsAt: nil).isWeekly)
+    }
+
+    /// Pro plans no longer have a 5h window. Codex 0.153 only prints the
+    /// weekly figure, and its footer omits the word "limit"; that must still
+    /// parse, with the weekly window promoted to primary.
+    func testCodexStatusFallbackAcceptsWeeklyOnlyOutput() throws {
+        // Captured from `codex -s read-only -a never` on 2026-09-03.
+        let footer = try XCTUnwrap(CodexUsageProvider.parseStatusOutput("""
+        ⚠ Heads up, you have less than 5% of your weekly limit left. Run /status for a breakdown. · weekly 1% left
+        ⚠ MCP startup incomplete (failed: zoho-invoice)  › Ask Codex to do anything   gpt-5.6-sol high · Context 100% left · weekly 1% left
+        """))
+        XCTAssertEqual(footer.primary.label, "7d window")
+        XCTAssertEqual(footer.primary.usedPercent, 99)
+        XCTAssertEqual(footer.primary.remainingPercent, 1)
+        XCTAssertNil(footer.secondary)
+        XCTAssertEqual(footer.source, .cliFallback)
+
+        let breakdown = try XCTUnwrap(CodexUsageProvider.parseStatusOutput("""
+        Weekly limit: [████████████████████] 99% used (resets 14:30 on 6 Sep)
+        """))
+        XCTAssertEqual(breakdown.primary.label, "7d window")
+        XCTAssertEqual(breakdown.primary.usedPercent, 99)
+
+        XCTAssertNil(CodexUsageProvider.parseStatusOutput("gpt-5.6-sol high · Context 100% left"))
+    }
+
+    /// Regression: writing `/status` to a Codex CLI that had already exited
+    /// delivered SIGPIPE and killed the app with no crash report. The write
+    /// must fail with an error instead of terminating the process.
+    func testChildProcessInputWriteToClosedPipeThrowsInsteadOfKillingProcess() throws {
+        let pipe = Pipe()
+        try pipe.fileHandleForReading.close()
+
+        XCTAssertThrowsError(
+            try ChildProcessInput.write("/status\r", to: pipe.fileHandleForWriting, provider: "codex")
+        ) { error in
+            guard case UsageError.commandFailed = error else {
+                return XCTFail("Expected commandFailed, got \(error)")
+            }
+        }
+        // Reaching this line proves SIGPIPE did not terminate the test runner.
+        try pipe.fileHandleForWriting.close()
+    }
+
+    /// Regression: `-a untrusted` is not a valid Codex approval policy. Codex
+    /// rejected it and exited immediately, so the fallback never once worked.
+    func testCodexStatusFallbackUsesValidApprovalPolicy() {
+        let arguments = CodexUsageProvider.statusFallbackArguments(binary: "/usr/local/bin/codex")
+        XCTAssertFalse(arguments.contains("untrusted"))
+        XCTAssertEqual(arguments.first, "-q")
+        XCTAssertTrue(arguments.contains("/usr/local/bin/codex"))
+        for (flag, value) in [("-s", "read-only"), ("-a", "never")] {
+            let index = try? XCTUnwrap(arguments.firstIndex(of: flag), "missing \(flag)")
+            XCTAssertEqual(index.map { arguments[$0 + 1] }, value)
+        }
+    }
+
     func testCodexAuthenticationRPCErrorDoesNotBecomeGenericFailure() {
         XCTAssertThrowsError(try CodexUsageProvider.parseResponseObject([
             "id": 1,

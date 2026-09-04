@@ -17,6 +17,23 @@ struct UsageWindow: Equatable {
     var remainingPercent: Double {
         min(100, max(0, 100 - usedPercent))
     }
+
+    /// True for windows that span a day or more ("7d window", "Weekly").
+    /// Plans without a short window (Codex Pro) report the weekly window as
+    /// `primary`, so the UI cannot assume `primary` is a session window.
+    var isWeekly: Bool {
+        let normalized = label.lowercased()
+        if normalized.contains("week") { return true }
+        if let match = normalized.range(of: #"^\d+d\b"#, options: .regularExpression) {
+            return !match.isEmpty
+        }
+        return false
+    }
+
+    /// Row title for the detail views: "Week" for weekly windows, else "Session".
+    var displayTitle: String {
+        isWeekly ? "Week" : "Session"
+    }
 }
 
 struct ProviderUsage: Equatable {
