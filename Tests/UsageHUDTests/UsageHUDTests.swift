@@ -469,12 +469,60 @@ final class UsageHUDTests: XCTestCase {
         )
     }
 
-    func testClaudeRotationGraceIsShortRelativeToTheRequestTimeout() {
-        // The grace must be long enough for Claude Code's Keychain write to
-        // land but short enough that a poll still finishes well inside the
-        // scheduler's expectations (each request already has a 10s timeout).
-        XCTAssertGreaterThan(ClaudeUsageProvider.rotationGrace, 0)
-        XCTAssertLessThanOrEqual(ClaudeUsageProvider.rotationGrace, 5)
+    func testClaudeRetriesOnlyWhenCredentialsRotateAfterUnauthorizedResponse() async throws {
+        for rotates in [true, false] {
+            var events: [String] = []
+            var waited = false
+            let provider = ClaudeUsageProvider(
+                loadCredential: { excluded in
+                    events.append(excluded == nil ? "initial credential" : "reload credential")
+                    if let excluded {
+                        XCTAssertEqual(excluded, "old-token")
+                        guard waited, rotates else {
+                            throw UsageError.notLoggedIn("No replacement credential")
+                        }
+                    }
+                    return ClaudeCredential(
+                        accessToken: excluded == nil ? "old-token" : "new-token",
+                        plan: "Pro",
+                        source: .scopedKeychain
+                    )
+                },
+                dataForRequest: { request in
+                    let authorization = request.value(forHTTPHeaderField: "Authorization")
+                    events.append(authorization ?? "missing authorization")
+                    let status = authorization == "Bearer new-token" ? 200 : 401
+                    return (
+                        Data(#"{"five_hour":{"utilization":25}}"#.utf8),
+                        try XCTUnwrap(HTTPURLResponse(
+                            url: try XCTUnwrap(request.url), statusCode: status,
+                            httpVersion: nil, headerFields: nil
+                        ))
+                    )
+                },
+                waitForRotation: {
+                    events.append("wait for rotation")
+                    waited = true
+                }
+            )
+
+            do {
+                let usage = try await provider.fetch()
+                XCTAssertTrue(rotates, "An unchanged credential must remain a sign-in failure")
+                XCTAssertEqual(usage.primary.remainingPercent, 75)
+                XCTAssertEqual(usage.plan, "Pro")
+            } catch {
+                XCTAssertFalse(rotates, "A rotated credential should recover: \(error)")
+                guard case UsageError.notLoggedIn = error else {
+                    XCTFail("Expected a sign-in error, got \(error)")
+                    continue
+                }
+            }
+            XCTAssertEqual(events, [
+                "initial credential", "Bearer old-token", "reload credential",
+                "wait for rotation", "reload credential",
+            ] + (rotates ? ["Bearer new-token"] : []))
+        }
     }
 
     func testUsageTimingFormatting() {
@@ -513,12 +561,6 @@ final class UsageHUDTests: XCTestCase {
             UsageFormatting.refreshCountdownText(for: now.addingTimeInterval(3_661), now: now),
             "REFRESH 01:01:01"
         )
-    }
-
-    func testProvidersUseIndependentDefaultIntervals() {
-        XCTAssertEqual(PollingSchedule.codexInterval, 120)
-        XCTAssertEqual(PollingSchedule.claudeInterval, 300)
-        XCTAssertEqual(PollingSchedule.kimiInterval, 300)
     }
 
     func testLegacySharedPollingIntervalMigratesToPerProviderSettings() throws {
@@ -614,13 +656,6 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(window.usedPercent, 37.5)
         XCTAssertEqual(window.remainingPercent, 62.5)
         XCTAssertNotNil(window.resetsAt)
-    }
-
-    func testRecursiveCredentialLookup() throws {
-        let credential: [String: Any] = [
-            "claudeAiOauth": ["accessToken": "local-test-token"],
-        ]
-        XCTAssertEqual(ClaudeUsageProvider.findString(key: "accessToken", in: credential), "local-test-token")
     }
 
     func testClaudeCredentialLocationsPreferScopedThenLegacyThenFile() {
@@ -886,9 +921,11 @@ final class UsageHUDTests: XCTestCase {
         let support = root.appendingPathComponent("support")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        let originalScript = root.appendingPathComponent("original-statusline.sh")
+        try Data("exec /bin/cat\n".utf8).write(to: originalScript)
         let settingsURL = config.appendingPathComponent("settings.json")
         try JSONSerialization.data(withJSONObject: [
-            "statusLine": ["type": "command", "command": "printf ccstatusline"],
+            "statusLine": ["type": "command", "command": "/bin/sh '\(originalScript.path)' ccstatusline"],
         ]).write(to: settingsURL)
 
         let installer = ClaudeStatusLineInstaller(
@@ -911,15 +948,16 @@ final class UsageHUDTests: XCTestCase {
         process.standardOutput = output
         process.standardError = Pipe()
         try process.run()
-        input.fileHandleForWriting.write(Data(#"{"rate_limits":{"five_hour":{"used_percentage":12}}}"#.utf8))
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "rate_limits": ["five_hour": ["used_percentage": 12]],
+            "cwd": "a path with spaces and $dollars",
+        ], options: [.prettyPrinted, .sortedKeys])
+        try input.fileHandleForWriting.write(contentsOf: payload)
         try input.fileHandleForWriting.close()
         process.waitUntilExit()
 
         XCTAssertEqual(process.terminationStatus, 0)
-        XCTAssertEqual(
-            String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8),
-            "ccstatusline"
-        )
+        XCTAssertEqual(output.fileHandleForReading.readDataToEndOfFile(), payload)
     }
 
     func testClaudeStatusLineCommandRecognitionIsNarrow() {
@@ -1106,19 +1144,32 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertEqual(UsageWindow(label: "x", usedPercent: -4, resetsAt: nil).remainingPercent, 100)
     }
 
-    func testNVMExecutableCanFindSiblingNodeWithAugmentedPath() throws {
-        guard let codex = ExecutableLocator.find("codex") else {
-            throw XCTSkip("Codex is not installed on this test host")
+    func testCodexLaunchAddsSiblingRuntimeToMinimalPath() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let launcher = root.appendingPathComponent("codex")
+        let runtime = root.appendingPathComponent("node")
+        // A fake Node executable speaks just enough app-server RPC to prove
+        // the env-based launcher finds its sibling through the production PATH.
+        try Data("#!/usr/bin/env node\n".utf8).write(to: launcher)
+        try Data(#"""
+        #!/bin/sh
+        IFS= read -r initialize
+        printf '%s\n' '{"id":0,"result":{}}'
+        IFS= read -r initialized
+        IFS= read -r request
+        printf '%s\n' '{"id":1,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300}}}}'
+        while IFS= read -r remaining; do :; done
+        """#.utf8).write(to: runtime)
+        for file in [launcher, runtime] {
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
         }
-        let resolved = URL(fileURLWithPath: codex).resolvingSymlinksInPath()
-        let head = (try? FileHandle(forReadingFrom: resolved).read(upToCount: 64)).flatMap {
-            String(data: $0, encoding: .utf8)
-        } ?? ""
-        guard head.hasPrefix("#!"), head.contains("node") else {
-            throw XCTSkip("Codex is a standalone binary here, not an NVM node launcher")
-        }
-        let directory = URL(fileURLWithPath: codex).deletingLastPathComponent().path
-        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: "\(directory)/node"))
+        let provider = CodexUsageProvider(binary: launcher.path, environment: ["PATH": "/usr/bin:/bin"])
+        let usage = try await provider.fetch()
+        XCTAssertEqual(usage.kind, .codex)
+        XCTAssertEqual(usage.primary.remainingPercent, 75)
+        XCTAssertEqual(usage.primary.label, "5h window")
     }
 
     func testKimiUsageResponseMapsFiveHourAndWeeklyWindows() throws {
@@ -1165,7 +1216,7 @@ final class UsageHUDTests: XCTestCase {
         }
     }
 
-    func testKimiCredentialsRequireAUsableUnexpiredToken() throws {
+    func testKimiFetchUsesFreshCredentialsAndRejectsExpiringTokenWithoutRefreshToken() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let credentialsURL = root.appendingPathComponent("kimi-code.json")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1175,16 +1226,39 @@ final class UsageHUDTests: XCTestCase {
             "expires_at": 1_800_000_100,
         ]).write(to: credentialsURL)
 
-        let credentials = try KimiUsageProvider.readCredentials(from: credentialsURL)
-        XCTAssertEqual(credentials.accessToken, "secret-test-token")
-        XCTAssertTrue(KimiUsageProvider.isAccessTokenFresh(
-            credentials,
-            now: Date(timeIntervalSince1970: 1_800_000_000)
-        ))
-        XCTAssertFalse(KimiUsageProvider.isAccessTokenFresh(
-            credentials,
-            now: Date(timeIntervalSince1970: 1_800_000_096)
-        ))
+        let recorder = KimiRequestRecorder()
+        for timestamp in [1_800_000_000.0, 1_800_000_096.0] {
+            let provider = KimiUsageProvider(
+                credentialsURL: credentialsURL,
+                baseURL: URL(string: "https://usage.test/coding/v1")!,
+                refreshLockTargetURL: root.appendingPathComponent("oauth/kimi-code"),
+                dataForRequest: { request in
+                    await recorder.append(request)
+                    return (
+                        Data(#"{"limits":[{"window":{"duration":5,"timeUnit":"HOUR"},"detail":{"limit":100,"used":20}}]}"#.utf8),
+                        try XCTUnwrap(HTTPURLResponse(
+                            url: try XCTUnwrap(request.url), statusCode: 200,
+                            httpVersion: nil, headerFields: nil
+                        ))
+                    )
+                },
+                now: { Date(timeIntervalSince1970: timestamp) }
+            )
+            do {
+                let usage = try await provider.fetch()
+                XCTAssertEqual(timestamp, 1_800_000_000, "Expiring token should be rejected")
+                XCTAssertEqual(usage.primary.remainingPercent, 80)
+            } catch {
+                XCTAssertEqual(timestamp, 1_800_000_096, "Fresh token should work: \(error)")
+                guard case UsageError.notLoggedIn = error else {
+                    XCTFail("Expected a sign-in error, got \(error)")
+                    continue
+                }
+            }
+        }
+        let requests = await recorder.snapshot()
+        XCTAssertEqual(requests.count, 1, "An expiring token must not reach the usage endpoint")
+        XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer secret-test-token")
     }
 
     func testKimiProviderRefreshesExpiredTokenAndPersistsRotatedCredentials() async throws {
@@ -1633,27 +1707,6 @@ final class UsageHUDTests: XCTestCase {
         XCTAssertTrue(previous.contains("first marker"))
     }
 
-    func testAppLoggerCanClearCurrentAndRotatedLogs() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let logger = AppLogger(directory: directory, maxBytes: 100)
-        XCTAssertTrue(logger.prepare())
-        logger.log(.info, category: "test", "old log entry")
-        logger.log(.warning, category: "test", String(repeating: "x", count: 150))
-        logger.flush()
-        XCTAssertTrue(logger.clear())
-
-        let current = try String(contentsOf: logger.fileURL, encoding: .utf8)
-        XCTAssertTrue(current.isEmpty)
-        XCTAssertFalse(
-            FileManager.default.fileExists(
-                atPath: directory.appendingPathComponent("usage-hud.previous.log").path
-            )
-        )
-    }
-
     // MARK: - Notch mode
 
     private var notchedScreenFrame: CGRect { CGRect(x: 0, y: 0, width: 1_512, height: 982) }
@@ -1720,7 +1773,7 @@ final class UsageHUDTests: XCTestCase {
 
         XCTAssertEqual(bounds.maxY, notchedScreenFrame.maxY)
         XCTAssertEqual(bounds.midX, notch.rect.midX)
-        XCTAssertEqual(bounds.height, notch.rect.height + NotchGeometry.trayHeight)
+        XCTAssertEqual(bounds.height, notch.rect.height + NotchTheme.classic.trayHeight)
     }
 
     func testExpandedWidthIsTheSameWhateverIsOnShow() {

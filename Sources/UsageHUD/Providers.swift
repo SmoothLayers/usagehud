@@ -96,8 +96,16 @@ enum ChildProcessInput {
 }
 
 struct CodexUsageProvider: UsageProviding {
+    private let binary: String?
+    private let environment: [String: String]
+
+    init(binary: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment) {
+        self.binary = binary
+        self.environment = environment
+    }
+
     func fetch() async throws -> ProviderUsage {
-        guard let binary = ExecutableLocator.find("codex") else {
+        guard let binary = binary ?? ExecutableLocator.find("codex") else {
             AppLog.error("codex", "Codex CLI not found")
             throw UsageError.executableMissing("Codex")
         }
@@ -114,7 +122,7 @@ struct CodexUsageProvider: UsageProviding {
             // Apps opened from Finder receive a minimal PATH. NVM's `codex`
             // launcher uses `#!/usr/bin/env node`, so include the directory
             // that contains both the launcher and its Node runtime.
-            var environment = ProcessInfo.processInfo.environment
+            var environment = self.environment
             let binaryDirectory = URL(fileURLWithPath: binary)
                 .deletingLastPathComponent()
                 .path
@@ -639,10 +647,6 @@ struct KimiUsageProvider: UsageProviding {
         return (data, http)
     }
 
-    static func readCredentials(from url: URL) throws -> KimiCredentials {
-        try readCredentialSnapshot(from: url).credentials
-    }
-
     private static func readCredentialSnapshot(from url: URL) throws -> CredentialSnapshot {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw UsageError.notLoggedIn("Sign in by running `kimi`")
@@ -958,21 +962,40 @@ struct ClaudeUsageProvider: UsageProviding {
     // so a 401 can land while the replacement token is still milliseconds from
     // the Keychain. Long enough for that write to settle, short next to the
     // ten-second request timeout.
-    static let rotationGrace: TimeInterval = 2.5
+    private static let rotationGrace: TimeInterval = 2.5
+    private let loadCredential: (String?) async throws -> ClaudeCredential
+    private let dataForRequest: (URLRequest) async throws -> (Data, URLResponse)
+    private let waitForRotation: () async -> Void
+
+    init(
+        loadCredential: @escaping (String?) async throws -> ClaudeCredential = {
+            try await ClaudeCredentials.load(excludingAccessToken: $0)
+        },
+        dataForRequest: @escaping (URLRequest) async throws -> (Data, URLResponse) = {
+            try await URLSession.shared.data(for: $0)
+        },
+        waitForRotation: @escaping () async -> Void = {
+            try? await Task.sleep(nanoseconds: UInt64(rotationGrace * 1_000_000_000))
+        }
+    ) {
+        self.loadCredential = loadCredential
+        self.dataForRequest = dataForRequest
+        self.waitForRotation = waitForRotation
+    }
 
     func fetch() async throws -> ProviderUsage {
         AppLog.info("claude", "Usage request started")
-        var credential = try await ClaudeCredentials.load()
+        var credential = try await loadCredential(nil)
         var response = try await requestUsage(token: credential.accessToken)
 
         // Claude Code can rotate its scoped Keychain token while a poll is in
         // flight. Re-read once on 401, but only retry when the token changed.
         if response.http.statusCode == 401 {
-            var refreshed = try? await ClaudeCredentials.load(excludingAccessToken: credential.accessToken)
+            var refreshed = try? await loadCredential(credential.accessToken)
             if refreshed == nil {
                 AppLog.info("claude", "HTTP 401 with unchanged credential; waiting \(Self.rotationGrace)s for an in-flight rotation")
-                try? await Task.sleep(nanoseconds: UInt64(Self.rotationGrace * 1_000_000_000))
-                refreshed = try? await ClaudeCredentials.load(excludingAccessToken: credential.accessToken)
+                await waitForRotation()
+                refreshed = try? await loadCredential(credential.accessToken)
             }
             if let refreshed {
                 AppLog.info("claude", "Credential rotated after HTTP 401; retrying once source=\(refreshed.source.rawValue)")
@@ -1032,7 +1055,7 @@ struct ClaudeUsageProvider: UsageProviding {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("usage-hud/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await dataForRequest(request)
         guard let http = response as? HTTPURLResponse else {
             AppLog.error("claude", "Usage request returned no HTTP response")
             throw UsageError.requestFailed("Claude usage request returned no response")
@@ -1078,19 +1101,5 @@ struct ClaudeUsageProvider: UsageProviding {
         let displayedRaw = raw.flatMap { $0.isEmpty ? nil : $0 } ?? "<missing>"
         let displayedSeconds = parsedSeconds.map { String(Int($0.rounded())) } ?? "<unparsed>"
         return "Rate limited HTTP 429 Retry-After raw=\"\(displayedRaw)\" parsedSeconds=\(displayedSeconds)"
-    }
-
-    static func findString(key: String, in value: Any) -> String? {
-        if let dictionary = value as? [String: Any] {
-            if let match = dictionary[key] as? String { return match }
-            for nested in dictionary.values {
-                if let match = findString(key: key, in: nested) { return match }
-            }
-        } else if let array = value as? [Any] {
-            for nested in array {
-                if let match = findString(key: key, in: nested) { return match }
-            }
-        }
-        return nil
     }
 }

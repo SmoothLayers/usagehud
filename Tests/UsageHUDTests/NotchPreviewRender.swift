@@ -1,5 +1,5 @@
-// Design-iteration harness: renders the notch tray states to PNGs so the
-// design can be judged without hovering a real notch. Skipped unless asked:
+// Preview exporter, not a visual regression test. Renders notch states
+// for manual review. Skipped unless requested:
 //   RENDER_NOTCH_PREVIEWS=1 swift test --filter NotchPreviewRender
 import AppKit
 import SwiftUI
@@ -13,10 +13,15 @@ final class NotchPreviewRender: XCTestCase {
             throw XCTSkip("preview rendering not requested")
         }
 
-        let outputDir = URL(fileURLWithPath: "/tmp/notch-previews", isDirectory: true)
-        try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        let outputDir = URL(
+            fileURLWithPath: ProcessInfo.processInfo.environment["NOTCH_PREVIEW_OUTPUT_DIR"] ?? "/tmp/notch-previews",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
-        let defaults = UserDefaults(suiteName: "notch-preview-\(UUID().uuidString)")!
+        let suiteName = "notch-preview-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: "showKimi")
         let settings = AppSettings(defaults: defaults)
         let store = UsageStore(defaults: defaults, settings: settings)
@@ -46,7 +51,7 @@ final class NotchPreviewRender: XCTestCase {
 
         let hardwareNotch = CGSize(width: 200, height: 32)
 
-        func render(_ name: String, expanded: Bool, hovered: Int?, hardware: Bool, peeking: Bool = false) {
+        func render(_ name: String, expanded: Bool, hovered: Int?, hardware: Bool, peeking: Bool = false) throws {
             let notch = NotchState()
             notch.isExpanded = expanded
             notch.isPeeking = peeking
@@ -61,7 +66,7 @@ final class NotchPreviewRender: XCTestCase {
             let theme = settings.notchTheme
             let width = NotchGeometry.expandedWidth(notch: metrics, providerCount: 3, theme: theme)
                 + NotchGeometry.shadowPadding * 2
-            let height = hardwareNotch.height + NotchGeometry.trayHeight(for: theme) + NotchGeometry.shadowPadding
+            let height = hardwareNotch.height + theme.trayHeight + NotchGeometry.shadowPadding
 
             let view = ZStack(alignment: .top) {
                 // Stand-in desktop so shadow and rim can be judged.
@@ -80,57 +85,56 @@ final class NotchPreviewRender: XCTestCase {
 
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
-            guard let image = renderer.nsImage,
-                  let tiff = image.tiffRepresentation,
-                  let rep = NSBitmapImageRep(data: tiff),
-                  let png = rep.representation(using: .png, properties: [:]) else {
-                XCTFail("could not render \(name)")
-                return
-            }
-            try? png.write(to: outputDir.appendingPathComponent("\(name).png"))
+            let image = try XCTUnwrap(renderer.nsImage, "could not render \(name)")
+            let tiff = try XCTUnwrap(image.tiffRepresentation)
+            let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff))
+            let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            try png.write(to: outputDir.appendingPathComponent("\(name).png"))
         }
 
-        render("1-collapsed-virtual", expanded: false, hovered: nil, hardware: false)
-        render("2-peek", expanded: false, hovered: nil, hardware: true, peeking: true)
-        render("3-tray", expanded: true, hovered: nil, hardware: true)
-        render("4-detail-claude", expanded: true, hovered: 1, hardware: true)
-        render("5-detail-kimi", expanded: true, hovered: 2, hardware: true)
+        try render("1-collapsed-virtual", expanded: false, hovered: nil, hardware: false)
+        try render("2-peek", expanded: false, hovered: nil, hardware: true, peeking: true)
+        try render("3-tray", expanded: true, hovered: nil, hardware: true)
+        try render("4-detail-claude", expanded: true, hovered: 1, hardware: true)
+        try render("5-detail-kimi", expanded: true, hovered: 2, hardware: true)
 
         // Every other tray design, at rest and with Claude's detail open.
         for theme in NotchTheme.allCases where theme != .classic {
             settings.setNotchTheme(theme)
-            render("7-\(theme.rawValue)-tray", expanded: true, hovered: nil, hardware: true)
-            render("8-\(theme.rawValue)-detail", expanded: true, hovered: 1, hardware: true)
+            try render("7-\(theme.rawValue)-tray", expanded: true, hovered: nil, hardware: true)
+            try render("8-\(theme.rawValue)-detail", expanded: true, hovered: 1, hardware: true)
         }
         settings.setNotchTheme(.classic)
 
         // One sheet of all six themes for the README, each shot captioned.
-        composeThemeSheet(in: outputDir)
+        try composeThemeSheet(in: outputDir)
 
         // Stale styling on film: the desaturated ring and the amber bead
         // under its number. Rendered last so the healthy shots above double
         // as the README's notch imagery.
         // The matte tray: black behind the icons, no glass and no floor light.
         settings.setNotchTrayDark(true)
-        render("9-dark-tray", expanded: true, hovered: nil, hardware: true)
+        try render("9-dark-tray", expanded: true, hovered: nil, hardware: true)
         settings.setNotchTrayDark(false)
 
         store.claudeIsStale = true
-        render("6-tray-stale", expanded: true, hovered: nil, hardware: true)
+        try render("6-tray-stale", expanded: true, hovered: nil, hardware: true)
         print("previews written to \(outputDir.path)")
     }
 
     /// Tiles the six theme shots into a three-column grid with a caption
     /// under each, so the README can show every tray design in one image.
-    private func composeThemeSheet(in outputDir: URL) {
+    private func composeThemeSheet(in outputDir: URL) throws {
         let shots: [(NotchTheme, String)] = NotchTheme.allCases.map { theme in
             (theme, theme == .classic ? "3-tray" : "7-\(theme.rawValue)-tray")
         }
-        let images = shots.compactMap { theme, name -> (NotchTheme, NSImage)? in
-            guard let image = NSImage(contentsOf: outputDir.appendingPathComponent("\(name).png")) else { return nil }
+        let images = try shots.map { theme, name in
+            let image = try XCTUnwrap(
+                NSImage(contentsOf: outputDir.appendingPathComponent("\(name).png")),
+                "missing preview \(name)"
+            )
             return (theme, image)
         }
-        guard images.count == shots.count else { return }
 
         let columns = 3
         let cellWidth: CGFloat = 640
@@ -168,9 +172,9 @@ final class NotchPreviewRender: XCTestCase {
         }
         sheet.unlockFocus()
 
-        guard let tiff = sheet.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]) else { return }
-        try? png.write(to: outputDir.appendingPathComponent("notch-themes.png"))
+        let tiff = try XCTUnwrap(sheet.tiffRepresentation)
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff))
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        try png.write(to: outputDir.appendingPathComponent("notch-themes.png"))
     }
 }

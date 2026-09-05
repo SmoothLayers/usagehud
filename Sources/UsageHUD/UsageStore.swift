@@ -1,12 +1,6 @@
 import AppKit
 import Foundation
 
-enum PollingSchedule {
-    static let codexInterval: TimeInterval = AppSettings.defaultCodexPollingInterval
-    static let claudeInterval: TimeInterval = AppSettings.defaultClaudePollingInterval
-    static let kimiInterval: TimeInterval = AppSettings.defaultKimiPollingInterval
-}
-
 enum ClaudePolling {
     // api.anthropic.com/api/oauth/usage is an internal endpoint that rate
     // limits frequent pollers with long Retry-After cooldowns, so Claude never
@@ -61,7 +55,6 @@ enum ClaudeFreshness {
 enum ClaudeWindowActivationState: Equatable {
     case idle
     case running
-    case requestSent
     case estimated(Date)
     case confirmed(Date)
     case failed(String)
@@ -152,16 +145,13 @@ final class UsageStore: ObservableObject {
     @Published var claude: ProviderState = .loading
     @Published var kimi: ProviderState = .loading
     @Published var isCompact: Bool
-    @Published var lastRefresh: Date?
     @Published var isRefreshing = false
     @Published var claudeNotice: String?
     @Published var claudeIsStale = false
     @Published var kimiNotice: String?
     @Published var kimiIsStale = false
-    @Published var claudeLastAttempt: Date?
     @Published var claudeLiveStatus: String?
     @Published private(set) var claudeWindowActivationState: ClaudeWindowActivationState = .idle
-    @Published private(set) var claudeWindowScheduleNextAction: Date?
     @Published private(set) var claudeWindowScheduleStatus = "Automatic scheduling is off"
     @Published var codexLastSuccess: Date?
     @Published var claudeLastSuccess: Date?
@@ -179,9 +169,6 @@ final class UsageStore: ObservableObject {
     private let settings: AppSettings
     private let alertTracker: UsageAlertTracker
     private let claudeWindowActivator: any ClaudeWindowActivating
-    private var codexRefreshTask: Task<Void, Never>?
-    private var claudeRefreshTask: Task<Void, Never>?
-    private var kimiRefreshTask: Task<Void, Never>?
     private var codexTimer: Timer?
     private var claudeTimer: Timer?
     private var kimiTimer: Timer?
@@ -284,10 +271,6 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    func setClaudeLiveStatus(_ status: String?) {
-        claudeLiveStatus = status
-    }
-
     var canStartClaudeWindow: Bool {
         ClaudeWindowActivationEligibility.canStart(
             resetsAt: claudeWindowEffectiveResetAt,
@@ -300,8 +283,6 @@ final class UsageStore: ObservableObject {
         switch claudeWindowActivationState {
         case .running:
             return "Sending one restricted background request…"
-        case .requestSent:
-            return "Request sent · checking Claude’s timer"
         case let .estimated(resetAt):
             return "Window started · estimated reset in \(UsageFormatting.resetCountdownValueText(for: resetAt))"
         case let .confirmed(resetAt):
@@ -314,10 +295,6 @@ final class UsageStore: ObservableObject {
             }
             return "Sends one tool-free request without opening Terminal"
         }
-    }
-
-    var claudeWindowScheduleDetail: String {
-        claudeWindowScheduleStatus
     }
 
     private var claudeMonitoringEnabled: Bool {
@@ -432,7 +409,6 @@ final class UsageStore: ObservableObject {
     func stopClaudeWindowSchedule() {
         claudeWindowScheduleTimer?.invalidate()
         claudeWindowScheduleTimer = nil
-        claudeWindowScheduleNextAction = nil
     }
 
     func state(for provider: ProviderKind) -> ProviderState {
@@ -576,7 +552,7 @@ final class UsageStore: ObservableObject {
         codexIsRefreshing = true
         updateRefreshingState()
         AppLog.info("scheduler", "Codex refresh started trigger=\(trigger)")
-        codexRefreshTask = Task {
+        Task {
             let result = await Self.result(from: CodexUsageProvider())
             switch result {
             case let .success(usage):
@@ -588,8 +564,6 @@ final class UsageStore: ObservableObject {
                 codex = .failed(error.localizedDescription)
             }
             codexIsRefreshing = false
-            codexRefreshTask = nil
-            lastRefresh = .now
             updateRefreshingState()
             usageDisplayChanged?()
             AppLog.info("scheduler", "Codex refresh finished trigger=\(trigger)")
@@ -642,7 +616,7 @@ final class UsageStore: ObservableObject {
         ProviderPollPersistence.recordAttempt(for: .kimi, at: .now, to: defaults)
         updateRefreshingState()
         AppLog.info("scheduler", "Kimi refresh started trigger=\(trigger)")
-        kimiRefreshTask = Task {
+        Task {
             let result = await Self.result(from: KimiUsageProvider())
             switch result {
             case let .success(usage):
@@ -655,8 +629,6 @@ final class UsageStore: ObservableObject {
                 retainKimiCacheOrFail(error: error, now: .now)
             }
             kimiIsRefreshing = false
-            kimiRefreshTask = nil
-            lastRefresh = .now
             updateRefreshingState()
             usageDisplayChanged?()
             AppLog.info("scheduler", "Kimi refresh finished trigger=\(trigger)")
@@ -719,16 +691,13 @@ final class UsageStore: ObservableObject {
         claudeTimer = nil
         claudeNextRefresh = nil
         claudeIsRefreshing = true
-        claudeLastAttempt = now
         ProviderPollPersistence.recordAttempt(for: .claude, at: now, to: defaults)
         updateRefreshingState()
         AppLog.info("scheduler", "Claude refresh started trigger=\(trigger)")
-        claudeRefreshTask = Task {
+        Task {
             let result = await Self.result(from: ClaudeUsageProvider())
             applyClaudeResult(result, now: .now, attemptStartedAt: now)
             claudeIsRefreshing = false
-            claudeRefreshTask = nil
-            lastRefresh = .now
             updateRefreshingState()
             AppLog.info("scheduler", "Claude refresh finished trigger=\(trigger)")
         }
@@ -937,7 +906,6 @@ final class UsageStore: ObservableObject {
     private func evaluateClaudeWindowSchedule(trigger: String, now: Date = .now) {
         claudeWindowScheduleTimer?.invalidate()
         claudeWindowScheduleTimer = nil
-        claudeWindowScheduleNextAction = nil
 
         guard settings.claudeWindowScheduleEnabled else {
             claudeWindowScheduleStatus = "Automatic scheduling is off"
@@ -1007,12 +975,10 @@ final class UsageStore: ObservableObject {
         now: Date
     ) {
         let delay = max(1, fireAt.timeIntervalSince(now))
-        claudeWindowScheduleNextAction = fireAt
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.claudeWindowScheduleTimer = nil
-                self.claudeWindowScheduleNextAction = nil
                 self.evaluateClaudeWindowSchedule(trigger: "timer-\(reason)")
             }
         }

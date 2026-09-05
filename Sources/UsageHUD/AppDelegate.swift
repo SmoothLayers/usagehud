@@ -534,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settings.claudeLiveUsageEnabled {
             do {
                 let result = try claudeStatusLineInstaller.install()
-                store.setClaudeLiveStatus(result.detail)
+                store.claudeLiveStatus = result.detail
                 switch result {
                 case .installed, .alreadyInstalled, .chainedCCStatusLine:
                     if claudeLiveUsageServer == nil {
@@ -553,7 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 claudeLiveUsageServer?.stop()
                 claudeLiveUsageServer = nil
                 let detail = "Live Claude updates unavailable: \(error.localizedDescription)"
-                store.setClaudeLiveStatus(detail)
+                store.claudeLiveStatus = detail
                 AppLog.error("claude-live", detail)
             }
         } else {
@@ -561,10 +561,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             claudeLiveUsageServer = nil
             do {
                 try claudeStatusLineInstaller.uninstall()
-                store.setClaudeLiveStatus(nil)
+                store.claudeLiveStatus = nil
             } catch {
                 let detail = "Could not remove managed Claude status line: \(error.localizedDescription)"
-                store.setClaudeLiveStatus(detail)
+                store.claudeLiveStatus = detail
                 AppLog.error("claude-live", detail)
             }
         }

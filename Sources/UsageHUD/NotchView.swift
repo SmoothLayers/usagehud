@@ -51,7 +51,7 @@ struct NotchShelfView: View {
             ? NotchGeometry.expandedWidth(notch: notchMetrics, providerCount: providers.count, theme: theme)
             : closedWidth
         let height = expanded
-            ? notch.notchSize.height + NotchGeometry.trayHeight(for: theme)
+            ? notch.notchSize.height + theme.trayHeight
             : notch.notchSize.height + (peeking ? NotchGeometry.peekHeightGrowth : 0)
 
         return ZStack(alignment: .top) {
@@ -665,7 +665,7 @@ private struct NotchInlineDetail: View {
                         Text("\(Int(window.remainingPercent.rounded()))%")
                             .foregroundStyle(Color.white.opacity(0.78))
                             .fontWeight(.semibold)
-                        + Text("  \(resetText(window.resetsAt, now: context.date))")
+                        + Text("  \(NotchThemeStyle.resetText(window.resetsAt, now: context.date))")
                             .foregroundStyle(Color.white.opacity(0.42))
                             .fontWeight(.medium)
                     )
@@ -721,13 +721,6 @@ private struct NotchInlineDetail: View {
             }
             .frame(height: 4)
         }
-    }
-
-    private func resetText(_ date: Date?, now: Date) -> String {
-        guard let date else { return "no reset" }
-        let seconds = date.timeIntervalSince(now)
-        guard seconds > 0 else { return "resetting" }
-        return "\(UsageFormatting.durationText(seconds)) left"
     }
 
     private func message(_ text: String) -> some View {
