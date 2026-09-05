@@ -42,30 +42,40 @@ enum HUDStatusPalette {
     static let amber = Color(red: 1, green: 0.76, blue: 0.32)
 }
 
-/// The "streaming right now" chip: a breathing dot beside LIVE, inhaling on
-/// the shared `HUDMotion.breath` clock with every other live indicator.
+@MainActor
+final class HUDWindowState: ObservableObject {
+    @Published var isVisible = false
+}
+
+private struct HUDAnimationsActiveKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var hudAnimationsActive: Bool {
+        get { self[HUDAnimationsActiveKey.self] }
+        set { self[HUDAnimationsActiveKey.self] = newValue }
+    }
+}
+
+/// A breathing LIVE dot. Only the dot needs timed updates; its label and
+/// shadow stay fixed, and an occluded HUD does not request animation frames.
 struct LiveBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.hudAnimationsActive) private var animationsActive
     let accent: Color
     var textScale: Double = 1
 
     var body: some View {
-        if reduceMotion {
-            content(breath: 1)
-        } else {
-            TimelineView(.animation(minimumInterval: 1 / 20)) { context in
-                content(breath: HUDMotion.breath(context.date))
-            }
-        }
-    }
-
-    private func content(breath: Double) -> some View {
         HStack(spacing: 3) {
-            Circle()
-                .fill(accent)
-                .frame(width: 4, height: 4)
-                .shadow(color: accent.opacity(0.3 + 0.5 * breath), radius: 1.5 + 2 * breath)
-                .opacity(0.65 + 0.35 * breath)
+            TimelineView(.animation(minimumInterval: 1 / 10, paused: reduceMotion || !animationsActive)) { context in
+                Circle()
+                    .fill(accent)
+                    .frame(width: 4, height: 4)
+                    .shadow(color: accent.opacity(0.7), radius: 3.5)
+                    .opacity(reduceMotion || !animationsActive ? 1 : 0.65 + 0.35 * HUDMotion.breath(context.date))
+            }
+            .frame(width: 4, height: 4)
             Text("LIVE")
                 .font(.system(size: 7 * textScale, weight: .black, design: .monospaced))
                 .tracking(0.7)

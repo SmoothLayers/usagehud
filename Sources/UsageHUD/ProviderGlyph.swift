@@ -8,29 +8,39 @@ struct ProviderGlyph: View {
     let kind: ProviderKind
 
     var body: some View {
-        BrandMark(pathData: kind.markPathData)
+        BrandMark(outline: kind.markPath)
             .fill()
             .aspectRatio(1, contentMode: .fit)
     }
 }
 
 private struct BrandMark: Shape {
-    let pathData: String
+    let outline: Path
 
     func path(in rect: CGRect) -> Path {
-        SVGPath.path(pathData, viewBox: 24, in: rect)
+        let scale = min(rect.width, rect.height) / 24
+        return outline.applying(
+            CGAffineTransform(translationX: rect.midX - 12 * scale, y: rect.midY - 12 * scale)
+                .scaledBy(x: scale, y: scale)
+        )
     }
 }
 
 private extension ProviderKind {
     /// All three outlines are authored in a 24x24 viewBox.
-    var markPathData: String {
+    var markPath: Path {
         switch self {
-        case .codex: return BrandMarkData.openAI
-        case .claude: return BrandMarkData.claude
-        case .kimi: return BrandMarkData.kimi
+        case .codex: return BrandMarkPaths.openAI
+        case .claude: return BrandMarkPaths.claude
+        case .kimi: return BrandMarkPaths.kimi
         }
     }
+}
+
+private enum BrandMarkPaths {
+    static let openAI = SVGPath.parse(BrandMarkData.openAI)
+    static let claude = SVGPath.parse(BrandMarkData.claude)
+    static let kimi = SVGPath.parse(BrandMarkData.kimi)
 }
 
 private enum BrandMarkData {

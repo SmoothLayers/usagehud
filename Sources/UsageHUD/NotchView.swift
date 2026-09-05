@@ -604,7 +604,7 @@ private struct RingColumn: View {
         } else if case let .cooling(until) = status {
             // The cooldown is a designed state, not an error: the ring counts
             // down to its own recovery.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [until])) { context in
                 Text(UsageFormatting.durationText(max(1, until.timeIntervalSince(context.date))))
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .monospacedDigit()
@@ -652,7 +652,7 @@ private struct NotchInlineDetail: View {
 
     private func row(_ window: UsageWindow, title: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [window.resetsAt])) { context in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(title)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))

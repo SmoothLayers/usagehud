@@ -115,7 +115,7 @@ private struct FallbackFigure: View {
 
     var body: some View {
         if case let .cooling(until) = status {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [until])) { context in
                 Text(UsageFormatting.durationText(max(1, until.timeIntervalSince(context.date))))
                     .font(.system(size: size, weight: .bold, design: design))
                     .monospacedDigit()
@@ -157,15 +157,14 @@ private struct DetailMessage: View {
 /// The label line above a meter in the monospaced themes: the window's
 /// name on the left, its percent and countdown on the right.
 ///
-/// The once-a-second clock wraps the whole line rather than just the
-/// countdown: `TimelineView` fills whatever width it is offered, so a clock
-/// beside a meter would starve the meter of room.
+/// The clock wraps the whole line because `TimelineView` fills the offered
+/// width; putting it beside a meter would leave the meter without room.
 private struct MonoRowHeader: View {
     let title: String
     let window: UsageWindow
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { clock in
+        TimelineView(MinuteCountdownSchedule(resetsAt: [window.resetsAt])) { clock in
             HStack(alignment: .firstTextBaseline) {
                 SmallCaps(text: title)
                 Spacer(minLength: 6)
@@ -567,7 +566,7 @@ private struct CapsulePill: View {
                     StatusDot(status: status, accent: accent)
                 }
                 if let usage = context.usage(kind) {
-                    TimelineView(.periodic(from: .now, by: 1)) { clock in
+                    TimelineView(MinuteCountdownSchedule(resetsAt: [usage.primary.resetsAt, usage.secondary?.resetsAt])) { clock in
                         VStack(alignment: .leading, spacing: 4) {
                             row(usage.primary.displayTitle, usage.primary, accent: accent, now: clock.date)
                             if let week = usage.secondary {
@@ -786,7 +785,7 @@ private struct ConcentricLegendRow: View {
     @ViewBuilder
     private var subline: some View {
         if let usage = context.usage(kind) {
-            TimelineView(.periodic(from: .now, by: 1)) { clock in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [usage.primary.resetsAt])) { clock in
                 HStack(spacing: 0) {
                     Text("Resets in ")
                     Text(NotchThemeStyle.resetText(usage.primary.resetsAt, now: clock.date, suffix: false))
@@ -923,7 +922,7 @@ private struct LedgerColumn: View {
     @ViewBuilder
     private func aside(_ usage: ProviderUsage?) -> some View {
         if let usage {
-            TimelineView(.periodic(from: .now, by: 1)) { clock in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [usage.primary.resetsAt, usage.secondary?.resetsAt])) { clock in
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 0) {
                         Text("Session · ")
