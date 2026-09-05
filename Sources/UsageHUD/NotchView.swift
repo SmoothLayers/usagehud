@@ -51,7 +51,7 @@ struct NotchShelfView: View {
             ? NotchGeometry.expandedWidth(notch: notchMetrics, providerCount: providers.count, theme: theme)
             : closedWidth
         let height = expanded
-            ? notch.notchSize.height + NotchGeometry.trayHeight(for: theme)
+            ? notch.notchSize.height + theme.trayHeight
             : notch.notchSize.height + (peeking ? NotchGeometry.peekHeightGrowth : 0)
 
         return ZStack(alignment: .top) {
@@ -604,7 +604,7 @@ private struct RingColumn: View {
         } else if case let .cooling(until) = status {
             // The cooldown is a designed state, not an error: the ring counts
             // down to its own recovery.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [until])) { context in
                 Text(UsageFormatting.durationText(max(1, until.timeIntervalSince(context.date))))
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .monospacedDigit()
@@ -652,7 +652,7 @@ private struct NotchInlineDetail: View {
 
     private func row(_ window: UsageWindow, title: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(MinuteCountdownSchedule(resetsAt: [window.resetsAt])) { context in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(title)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -665,7 +665,7 @@ private struct NotchInlineDetail: View {
                         Text("\(Int(window.remainingPercent.rounded()))%")
                             .foregroundStyle(Color.white.opacity(0.78))
                             .fontWeight(.semibold)
-                        + Text("  \(resetText(window.resetsAt, now: context.date))")
+                        + Text("  \(NotchThemeStyle.resetText(window.resetsAt, now: context.date))")
                             .foregroundStyle(Color.white.opacity(0.42))
                             .fontWeight(.medium)
                     )
@@ -721,13 +721,6 @@ private struct NotchInlineDetail: View {
             }
             .frame(height: 4)
         }
-    }
-
-    private func resetText(_ date: Date?, now: Date) -> String {
-        guard let date else { return "no reset" }
-        let seconds = date.timeIntervalSince(now)
-        guard seconds > 0 else { return "resetting" }
-        return "\(UsageFormatting.durationText(seconds)) left"
     }
 
     private func message(_ text: String) -> some View {

@@ -66,24 +66,6 @@ final class AppLogger: @unchecked Sendable {
         queue.sync {}
     }
 
-    @discardableResult
-    func clear() -> Bool {
-        queue.sync {
-            do {
-                if FileManager.default.fileExists(atPath: fileURL.path) {
-                    try FileManager.default.removeItem(at: fileURL)
-                }
-                if FileManager.default.fileExists(atPath: previousFileURL.path) {
-                    try FileManager.default.removeItem(at: previousFileURL)
-                }
-                try ensureFileExists()
-                return true
-            } catch {
-                return false
-            }
-        }
-    }
-
     private func ensureFileExists() throws {
         let directory = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

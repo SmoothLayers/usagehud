@@ -31,6 +31,7 @@ final class NotchController {
     private var currentPanelFrame: CGRect = .zero
     private var currentShelfBounds: CGRect = .zero
     private var activeScreenNumber: Int?
+    private var activeScreenFrame: CGRect?
     private var screenObserver: NSObjectProtocol?
     private var isEnabled = false
 
@@ -83,6 +84,7 @@ final class NotchController {
         currentPanelFrame = .zero
         currentShelfBounds = .zero
         activeScreenNumber = nil
+        activeScreenFrame = nil
     }
 
     // MARK: - Panel
@@ -134,11 +136,19 @@ final class NotchController {
 
     /// Retargets the panel at the display the pointer is on. Skipped while the
     /// shelf is open so it never teleports mid-interaction.
-    private func updateGeometry(force: Bool = false) {
+    private func updateGeometry(
+        force: Bool = false,
+        point: CGPoint = NSEvent.mouseLocation,
+        recheckDisplay: Bool = false
+    ) {
         guard isEnabled, let panel else { return }
         guard force || !notchState.isExpanded else { return }
 
-        let point = NSEvent.mouseLocation
+        // Mouse events only need cached hit regions while the pointer stays
+        // on the same display. The fallback timer still checks menu-bar and
+        // safe-area changes that do not post a screen notification.
+        if !force, !recheckDisplay, let activeScreenFrame, activeScreenFrame.contains(point) { return }
+
         let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
         guard let screen else { return }
 
@@ -151,7 +161,8 @@ final class NotchController {
             to: screen.frame
         )
 
-        guard force || screenNumber != activeScreenNumber || frame != currentPanelFrame else { return }
+        activeScreenFrame = screen.frame
+        guard force || screenNumber != activeScreenNumber || frame != currentPanelFrame || notch != currentNotch else { return }
 
         activeScreenNumber = screenNumber
         currentNotch = notch
@@ -194,19 +205,18 @@ final class NotchController {
         let timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.evaluatePointer()
+                self.evaluatePointer(recheckDisplay: true)
             }
         }
         timer.tolerance = Self.pollInterval / 2
         pollTimer = timer
     }
 
-    private func evaluatePointer() {
+    private func evaluatePointer(recheckDisplay: Bool = false) {
         guard isEnabled, panel != nil else { return }
-        updateGeometry()
-        guard let notch = currentNotch else { return }
         let point = NSEvent.mouseLocation
-
+        updateGeometry(point: point, recheckDisplay: recheckDisplay)
+        guard let notch = currentNotch else { return }
 
         if notchState.isExpanded {
             if NotchGeometry.stayZone(shelfBounds: currentShelfBounds).contains(point) {

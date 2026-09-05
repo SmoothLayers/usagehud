@@ -10,7 +10,7 @@ struct HUDView: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var settings: AppSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var statusPulse = false
+    @ObservedObject var windowState: HUDWindowState
     let hide: () -> Void
 
     var body: some View {
@@ -22,12 +22,7 @@ struct HUDView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-                statusPulse = true
-            }
-        }
+        .environment(\.hudAnimationsActive, windowState.isVisible)
     }
 
     private var expandedHUD: some View {
@@ -172,8 +167,7 @@ struct HUDView: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 5, height: 5)
-                .shadow(color: statusColor.opacity(statusPulse ? 0.8 : 0.2), radius: statusPulse ? 5 : 1)
-                .opacity(reduceMotion ? 1 : (statusPulse ? 1 : 0.65))
+                .shadow(color: statusColor.opacity(0.5), radius: 3)
             Spacer()
             Button(action: store.refresh) {
                 Image(systemName: "arrow.clockwise")

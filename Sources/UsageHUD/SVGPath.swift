@@ -12,17 +12,10 @@ import SwiftUI
 /// and vertical lines, cubic and quadratic curves (including their smooth
 /// forms), elliptical arcs, and close.
 enum SVGPath {
-    /// Parses `data` in a square viewBox and fits it into `rect`.
-    static func path(_ data: String, viewBox: CGFloat, in rect: CGRect) -> Path {
+    /// Parses an outline once in its original coordinates.
+    static func parse(_ data: String) -> Path {
         var builder = Builder(data: data)
-        let raw = builder.build()
-        guard viewBox > 0 else { return raw }
-
-        let scale = min(rect.width, rect.height) / viewBox
-        let transform = CGAffineTransform(translationX: rect.midX - viewBox * scale / 2,
-                                          y: rect.midY - viewBox * scale / 2)
-            .scaledBy(x: scale, y: scale)
-        return raw.applying(transform)
+        return builder.build()
     }
 
     private struct Builder {

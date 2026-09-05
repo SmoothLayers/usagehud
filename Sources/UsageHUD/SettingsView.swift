@@ -121,7 +121,7 @@ struct SettingsView: View {
                 HStack {
                     SettingLabel(
                         title: "AUTOMATIC WINDOWS",
-                        detail: store.claudeWindowScheduleDetail
+                        detail: store.claudeWindowScheduleStatus
                     )
                     Spacer()
                     InstrumentToggle(

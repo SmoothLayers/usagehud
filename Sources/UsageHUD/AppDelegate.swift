@@ -141,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let settings: AppSettings
     let store: UsageStore
     private var panel: NSPanel!
+    private let hudWindowState = HUDWindowState()
     private var settingsWindow: NSWindow?
     private var setupWindow: NSWindow?
     private var statusItem: NSStatusItem!
@@ -284,6 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             rootView: HUDView(
                 store: store,
                 settings: settings,
+                windowState: hudWindowState,
                 hide: { [weak self] in
                     AppLog.info("window", "HUD hidden from close button")
                     self?.panelUserHidden = true
@@ -511,6 +513,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === panel else { return }
+        let visible = window.isVisible && window.occlusionState.contains(.visible)
+        if hudWindowState.isVisible != visible {
+            hudWindowState.isVisible = visible
+        }
+    }
+
     func windowDidChangeScreen(_ notification: Notification) {
         configurePanelSizeLimits(compact: store.isCompact)
     }
@@ -525,6 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func workspaceDidWake(_ notification: Notification) {
+        notchController.refreshLayout()
         AppLog.info("scheduler", "System wake detected; checking provider freshness")
         store.refreshStaleProviders(trigger: "system-wake")
         store.handleClaudeWindowScheduleEvent(trigger: "system-wake")
@@ -534,7 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settings.claudeLiveUsageEnabled {
             do {
                 let result = try claudeStatusLineInstaller.install()
-                store.setClaudeLiveStatus(result.detail)
+                store.claudeLiveStatus = result.detail
                 switch result {
                 case .installed, .alreadyInstalled, .chainedCCStatusLine:
                     if claudeLiveUsageServer == nil {
@@ -553,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 claudeLiveUsageServer?.stop()
                 claudeLiveUsageServer = nil
                 let detail = "Live Claude updates unavailable: \(error.localizedDescription)"
-                store.setClaudeLiveStatus(detail)
+                store.claudeLiveStatus = detail
                 AppLog.error("claude-live", detail)
             }
         } else {
@@ -561,10 +572,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             claudeLiveUsageServer = nil
             do {
                 try claudeStatusLineInstaller.uninstall()
-                store.setClaudeLiveStatus(nil)
+                store.claudeLiveStatus = nil
             } catch {
                 let detail = "Could not remove managed Claude status line: \(error.localizedDescription)"
-                store.setClaudeLiveStatus(detail)
+                store.claudeLiveStatus = detail
                 AppLog.error("claude-live", detail)
             }
         }
@@ -577,6 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func workspaceOrderingChanged(_ notification: Notification) {
+        notchController.refreshLayout()
         updatePanelOrdering(reason: "workspace-changed")
     }
 

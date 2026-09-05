@@ -124,21 +124,10 @@ enum NotchGeometry {
         max(max(notch.width, theme.contentWidth(providerCount: providerCount)), minimumExpandedWidth)
     }
 
-    /// Height of the ring row, excluding the notch strip it hangs from. The
-    /// tray never grows downward past this, whatever is hovered.
-    static var trayHeight: CGFloat {
-        trayTopPadding + tileHeight + trayBottomPadding
-    }
-
-    /// The same, for whichever tray design is selected.
-    static func trayHeight(for theme: NotchTheme) -> CGFloat {
-        theme.trayHeight
-    }
-
     /// The shelf at rest: notch strip plus the ring row.
     static func shelfBounds(notch: Notch, providerCount: Int, theme: NotchTheme = .classic) -> CGRect {
         let width = expandedWidth(notch: notch, providerCount: providerCount, theme: theme)
-        let height = notch.height + trayHeight(for: theme)
+        let height = notch.height + theme.trayHeight
         return CGRect(
             x: notch.rect.midX - width / 2,
             y: notch.rect.maxY - height,

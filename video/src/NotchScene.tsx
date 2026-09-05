@@ -118,13 +118,12 @@ export const NotchScene: React.FC = () => {
   const arrive = useSpringAt(T.cursorIn, {damping: 20, stiffness: 60});
   const toClaude = useSpringAt(T.cursorToClaude, {damping: 18, stiffness: 80});
   const claudeTileCenterY = MENU_H + 10 * S + RING / 2;
-  const cursorX = 960 + (1 - arrive) * 60 + toClaude * 0;
+  const cursorX = 960 + (1 - arrive) * 60;
   const cursorY = interpolate(arrive, [0, 1], [720, MENU_H * 0.55]) + toClaude * (claudeTileCenterY - MENU_H * 0.55);
 
   // Peek, then open.
   const peek = useSpringAt(T.peek, {damping: 10, stiffness: 160});
   const open = useSpringAt(T.open, {damping: 13, stiffness: 110});
-  const openW = useSpringAt(T.open + 3, {damping: 16, stiffness: 90});
   const trayW = interpolate(open, [0, 1], [NOTCH_W + 14 * S * peek, TRAY_W]);
   const trayH = MENU_H + interpolate(open, [0, 1], [5 * S * peek, TRAY_CONTENT_H]);
   const contentOpacity = interpolate(open, [0.35, 0.8], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
