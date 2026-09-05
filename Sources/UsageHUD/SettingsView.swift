@@ -475,20 +475,30 @@ struct SettingsView: View {
 
     private var updateSection: some View {
         InstrumentSection(title: "UPDATES", detail: "Secure updates are downloaded and installed automatically") {
-            HStack {
-                SettingLabel(title: "AUTOMATIC UPDATES", detail: "Checks daily and installs in the background")
-                Spacer()
-                InstrumentToggle(isOn: settings.automaticUpdateChecks, tint: SettingsPalette.codex) {
-                    settings.setAutomaticUpdateChecks(!settings.automaticUpdateChecks)
+            VStack(spacing: 10) {
+                HStack {
+                    SettingLabel(title: "AUTOMATIC UPDATES", detail: "Checks daily and installs in the background")
+                    Spacer()
+                    InstrumentToggle(isOn: settings.automaticUpdateChecks, tint: SettingsPalette.codex) {
+                        settings.setAutomaticUpdateChecks(!settings.automaticUpdateChecks)
+                    }
                 }
-                Button(action: checkForUpdates) {
-                    Text("CHECK NOW")
-                        .font(.system(size: 8, weight: .black, design: .monospaced))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
+                Divider().overlay(Color.white.opacity(0.08))
+                HStack {
+                    Text("Version \(AppMetadata.version)")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.82))
+                    Spacer()
+                    Button(action: checkForUpdates) {
+                        Text("CHECK NOW")
+                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.82))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
