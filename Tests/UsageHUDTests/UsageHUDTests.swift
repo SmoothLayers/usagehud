@@ -1216,6 +1216,79 @@ final class UsageHUDTests: XCTestCase {
         }
     }
 
+    func testKimiEndpointUsesDefaultSlotWithoutConfig() {
+        let endpoint = KimiCodeEndpoint.resolve(environment: [:], configText: nil)
+        XCTAssertEqual(endpoint.baseURL, "https://api.kimi.com/coding/v1")
+        XCTAssertEqual(endpoint.oauthHost, "https://auth.kimi.com")
+        XCTAssertEqual(endpoint.credentialSlot, "kimi-code")
+    }
+
+    func testKimiEndpointFollowsGlobalLoginInConfig() {
+        let config = """
+        default_model = "kimi-code/kimi-for-coding"
+
+        [providers."managed:kimi-code"]
+        type = "kimi"
+        api_key = ""
+        base_url = "https://api.kimi.ai/coding/v1"
+
+        [providers."managed:kimi-code".oauth]
+        storage = "file"
+        key = "oauth/kimi-code-env-0e4f99c69cc27850"
+        oauth_host = "https://auth.kimi.ai"
+
+        [services.moonshot_search]
+        base_url = "https://api.kimi.ai/coding/v1/search"
+        """
+        let endpoint = KimiCodeEndpoint.resolve(environment: [:], configText: config)
+        XCTAssertEqual(endpoint.baseURL, "https://api.kimi.ai/coding/v1")
+        XCTAssertEqual(endpoint.oauthHost, "https://auth.kimi.ai")
+        // Matches the slot Kimi Code 0.43 writes for the global region.
+        XCTAssertEqual(endpoint.credentialSlot, "kimi-code-env-0e4f99c69cc27850")
+    }
+
+    func testKimiEndpointEnvironmentOverridesConfig() {
+        let config = """
+        [providers."managed:kimi-code"]
+        base_url = "https://api.kimi.ai/coding/v1"
+        [providers."managed:kimi-code".oauth]
+        oauth_host = "https://auth.kimi.ai"
+        """
+        let endpoint = KimiCodeEndpoint.resolve(
+            environment: ["KIMI_OAUTH_HOST": "https://auth.kimi.com/"],
+            configText: config
+        )
+        XCTAssertEqual(endpoint.oauthHost, "https://auth.kimi.com")
+        XCTAssertEqual(endpoint.baseURL, "https://api.kimi.ai/coding/v1")
+        XCTAssertNotEqual(endpoint.credentialSlot, "kimi-code")
+    }
+
+    func testKimiFetchTreatsBlankedCredentialsAsSignedOut() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let credentialsURL = root.appendingPathComponent("kimi-code.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [
+            "access_token": "",
+            "refresh_token": "",
+            "expires_at": 0,
+            "expires_in": 0,
+        ]).write(to: credentialsURL)
+
+        let provider = KimiUsageProvider(
+            credentialsURL: credentialsURL,
+            refreshLockTargetURL: root.appendingPathComponent("oauth/kimi-code"),
+            dataForRequest: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Blank credentials should not fetch")
+        } catch UsageError.notLoggedIn {
+        } catch {
+            XCTFail("Expected a sign-in error, got \(error)")
+        }
+    }
+
     func testKimiFetchUsesFreshCredentialsAndRejectsExpiringTokenWithoutRefreshToken() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let credentialsURL = root.appendingPathComponent("kimi-code.json")

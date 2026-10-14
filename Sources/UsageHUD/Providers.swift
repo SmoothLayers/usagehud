@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 protocol UsageProviding {
@@ -447,9 +448,99 @@ struct CodexUsageProvider: UsageProviding {
     }
 }
 
+/// Which Kimi Code deployment the CLI is signed in to, and the credential slot
+/// it stores tokens under. Mirrors Kimi Code's `resolveKimiCodeRuntimeAuth`:
+/// the mainland default uses `kimi-code`, while any other region or endpoint
+/// (for example the global kimi.ai login) gets a hashed `kimi-code-env-…` slot.
+struct KimiCodeEndpoint: Equatable {
+    static let defaultBaseURL = "https://api.kimi.com/coding/v1"
+    static let defaultOAuthHost = "https://auth.kimi.com"
+    private static let managedProviderTable = "providers.managed:kimi-code"
+
+    let baseURL: String
+    let oauthHost: String
+
+    init(baseURL: String? = nil, oauthHost: String? = nil) {
+        self.baseURL = Self.normalize(baseURL ?? Self.defaultBaseURL)
+        self.oauthHost = Self.normalize(oauthHost ?? Self.defaultOAuthHost)
+    }
+
+    var credentialSlot: String {
+        if baseURL == Self.defaultBaseURL, oauthHost == Self.defaultOAuthHost {
+            return "kimi-code"
+        }
+        // Kimi Code hashes JSON.stringify({ oauthHost, baseUrl }).
+        let json = #"{"oauthHost":\#(Self.jsonString(oauthHost)),"baseUrl":\#(Self.jsonString(baseURL))}"#
+        let digest = SHA256.hash(data: Data(json.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "kimi-code-env-\(hex.prefix(16))"
+    }
+
+    static func resolve(environment: [String: String], configText: String?) -> KimiCodeEndpoint {
+        let envBaseURL = nonEmpty(environment["KIMI_CODE_BASE_URL"])
+        let envOAuthHost = nonEmpty(environment["KIMI_CODE_OAUTH_HOST"])
+            ?? nonEmpty(environment["KIMI_OAUTH_HOST"])
+        let configured = configText.map(managedProviderSettings(fromConfig:))
+        // An env override owns both endpoints; it never mixes with config.toml.
+        if envBaseURL != nil || envOAuthHost != nil {
+            return KimiCodeEndpoint(baseURL: envBaseURL ?? configured?.baseURL, oauthHost: envOAuthHost)
+        }
+        return KimiCodeEndpoint(baseURL: configured?.baseURL, oauthHost: configured?.oauthHost)
+    }
+
+    /// Reads `base_url` and `oauth_host` for the managed Kimi Code provider
+    /// out of config.toml. Only handles the flat layout Kimi Code writes.
+    static func managedProviderSettings(fromConfig text: String) -> (baseURL: String?, oauthHost: String?) {
+        var table = ""
+        var baseURL: String?
+        var oauthHost: String?
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                table = line
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+                    .filter { $0 != "\"" && $0 != "'" && !$0.isWhitespace }
+                continue
+            }
+            guard let equals = line.firstIndex(of: "=") else { continue }
+            let key = line[..<equals].trimmingCharacters(in: .whitespaces)
+            let value = tomlString(String(line[line.index(after: equals)...]))
+            if table == managedProviderTable, key == "base_url" {
+                baseURL = value
+            } else if table == managedProviderTable + ".oauth", key == "oauth_host" {
+                oauthHost = value
+            }
+        }
+        return (nonEmpty(baseURL), nonEmpty(oauthHost))
+    }
+
+    private static func tomlString(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespaces)
+        guard let quote = value.first, quote == "\"" || quote == "'" else { return nil }
+        let body = value.dropFirst()
+        guard let end = body.firstIndex(of: quote) else { return nil }
+        return String(body[..<end])
+    }
+
+    private static func normalize(_ value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while result.hasSuffix("/") { result.removeLast() }
+        return result
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return value
+    }
+
+    private static func jsonString(_ value: String) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        return (try? encoder.encode(value)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\(value)\""
+    }
+}
+
 struct KimiUsageProvider: UsageProviding {
-    private static let defaultBaseURL = URL(string: "https://api.kimi.com/coding/v1")!
-    private static let defaultOAuthBaseURL = URL(string: "https://auth.kimi.com")!
     private static let oauthClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
     private static let refreshLeeway: TimeInterval = 5 * 60
     private static let shortWindowMinutes = 300
@@ -580,20 +671,23 @@ struct KimiUsageProvider: UsageProviding {
                 : URL(fileURLWithPath: value, isDirectory: true)
         } ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".kimi-code", isDirectory: true)
-        let resolvedCredentialsURL = credentialsURL ?? kimiHome
+        let endpoint = KimiCodeEndpoint.resolve(
+            environment: environment,
+            configText: try? String(contentsOf: kimiHome.appendingPathComponent("config.toml"), encoding: .utf8)
+        )
+        let slot = endpoint.credentialSlot
+        self.credentialsURL = credentialsURL ?? kimiHome
             .appendingPathComponent("credentials", isDirectory: true)
-            .appendingPathComponent("kimi-code.json")
-        self.credentialsURL = resolvedCredentialsURL
+            .appendingPathComponent("\(slot).json")
         self.baseURL = baseURL
-            ?? environment["KIMI_CODE_BASE_URL"].flatMap(URL.init(string:))
-            ?? Self.defaultBaseURL
+            ?? URL(string: endpoint.baseURL)
+            ?? URL(string: KimiCodeEndpoint.defaultBaseURL)!
         self.oauthBaseURL = oauthBaseURL
-            ?? environment["KIMI_CODE_OAUTH_HOST"].flatMap(URL.init(string:))
-            ?? environment["KIMI_OAUTH_HOST"].flatMap(URL.init(string:))
-            ?? Self.defaultOAuthBaseURL
+            ?? URL(string: endpoint.oauthHost)
+            ?? URL(string: KimiCodeEndpoint.defaultOAuthHost)!
         self.refreshLockTargetURL = refreshLockTargetURL ?? kimiHome
             .appendingPathComponent("oauth", isDirectory: true)
-            .appendingPathComponent("kimi-code")
+            .appendingPathComponent(slot)
         self.dataForRequest = dataForRequest ?? { request in
             try await session.data(for: request)
         }
@@ -649,13 +743,19 @@ struct KimiUsageProvider: UsageProviding {
 
     private static func readCredentialSnapshot(from url: URL) throws -> CredentialSnapshot {
         guard FileManager.default.fileExists(atPath: url.path) else {
+            AppLog.error("kimi", "Credentials file missing name=\(url.lastPathComponent)")
             throw UsageError.notLoggedIn("Sign in by running `kimi`")
         }
         do {
-            guard let document = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
-                  let accessToken = document["access_token"] as? String,
-                  !accessToken.isEmpty,
-                  let expiresAt = flexibleDouble(document["expires_at"]) else {
+            guard let document = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+                throw UsageError.invalidResponse("Kimi credentials file is invalid")
+            }
+            // Kimi Code can leave a signed-out slot in place with its tokens blanked.
+            guard let accessToken = document["access_token"] as? String, !accessToken.isEmpty else {
+                AppLog.error("kimi", "Credentials file has no access token name=\(url.lastPathComponent)")
+                throw UsageError.notLoggedIn("Sign in by running `kimi`")
+            }
+            guard let expiresAt = flexibleDouble(document["expires_at"]) else {
                 throw UsageError.invalidResponse("Kimi credentials file is invalid")
             }
             let refreshToken = (document["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
